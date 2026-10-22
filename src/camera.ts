@@ -216,9 +216,44 @@ export class CameraController {
     }
   }
 
-  /** 恢复帧循环。 */
+  /**
+   * 只释放摄像头，保留姿态模型。
+   *
+   * 与 `dispose()` 的区别：dispose 会把 Pose 实例一起关掉，下次要重新初始化 wasm
+   * （1 秒左右）；这里只停轨道，回来重新取流就能继续，模型不用重来。
+   *
+   * 为什么必须真的停轨道而不是只 `pause()`：`pause()` 只停了 rAF 循环，摄像头仍在
+   * 取流 —— 浏览器在切后台时会自己兜一层，但 **WebView 壳不会**，退到后台相机指示灯
+   * 会一直亮着。所以「切后台 = 释放摄像头」这条必须写在网页端，两端才一致。
+   */
+  releaseCamera(): void {
+    this.pause();
+    window.clearTimeout(this.sendWatchdog);
+    this.busy = false;
+    if (this.stream) {
+      for (const track of this.stream.getTracks()) track.stop();
+      this.stream = null;
+    }
+    this.video.srcObject = null;
+    this.landmarks = null;
+  }
+
+  /**
+   * 恢复帧循环。摄像头若已被 `releaseCamera()` 释放，会先重新取流。
+   *
+   * 重新取流是异步的，这里刻意不返回 Promise：调用方（visibilitychange / 原生事件）
+   * 本来就是「发后不管」的语义。失败时保持暂停即可，不要往上抛导致页面报错。
+   */
   resume(): void {
-    if (this.running || !this.stream) return;
+    if (this.running) return;
+    if (!this.stream) {
+      void this.openCamera()
+        .then(() => this.start())
+        .catch((error: unknown) => {
+          console.warn('[camera] 恢复摄像头失败，需要用户重新点「开启摄像头」', error);
+        });
+      return;
+    }
     this.start();
   }
 

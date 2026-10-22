@@ -75,9 +75,11 @@ gradle :app:assembleDebug
 
 ## 已知行为与限制
 
-- **切到后台会重载页面**：`onPause` 里主动停掉摄像头轨道（WebView 不像浏览器那样派发
-  `visibilitychange`，不管的话退到后台相机还在取流、指示灯常亮），`onResume` 重新
-  `loadUrl` 拿回画面。副作用是当前选中的姿势会回到默认，拍照预览也会被清掉。
+- **切后台会真正释放摄像头**：WebView 不像浏览器那样派发 `visibilitychange`，所以原生在
+  `onPause` 里往页面派发 `photocoach:suspend`、`onResume` 里派发 `photocoach:resume`，
+  由网页端（`../src/main.ts`）走与浏览器完全相同的释放/恢复逻辑。**事件名两端必须一致。**
+  - 网页端为此新增了 `camera.releaseCamera()`（只停轨道、保留姿态模型），
+    `resume()` 会在轨道已释放时自动重新取流。不走 `dispose()`，因为那会把 wasm 模型一起关掉。
 - **首次启动要联网**：App 打开的是线上地址，`?sharecode=` 会种 30 天 cookie。
   Service Worker 生效后才有离线能力；第一次启动如果断网会看到「暂时打不开」。
 - **不改 `start_url` 的 sharecode**：地址写死在 `app/build.gradle.kts` 的 `APP_URL`。

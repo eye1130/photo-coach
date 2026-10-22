@@ -368,14 +368,37 @@ video.addEventListener('loadedmetadata', () => {
   overlay.resize();
 });
 
+/**
+ * 切后台 / 回前台：暂停或恢复取景。
+ *
+ * 抽成函数是因为有两个触发源，必须走同一套逻辑，否则两端行为会不一致。
+ */
+function suspendCamera(): void {
+  // 真的把摄像头放掉，不只是停 rAF —— 只停循环的话轨道还在取流，
+  // 退到后台指示灯会一直亮（WebView 壳里尤其明显）。
+  camera.releaseCamera();
+  window.speechSynthesis?.cancel();
+}
+
+function resumeCamera(): void {
+  if (state.phase !== 'ready') return;
+  camera.resume();
+}
+
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) {
-    camera.pause();
-    window.speechSynthesis?.cancel();
-  } else if (state.phase === 'ready') {
-    camera.resume();
-  }
+  if (document.hidden) suspendCamera();
+  else resumeCamera();
 });
+
+/**
+ * Android 壳（`android/`）切后台/回前台时由原生派发这两个事件。
+ *
+ * 为什么需要：WebView **不会**像浏览器那样自己触发 `visibilitychange`，
+ * 不补这一层，壳里退到后台摄像头会一直取流。原生侧见
+ * `MainActivity.onPause/onResume`，事件名两端必须一致。
+ */
+window.addEventListener('photocoach:suspend', suspendCamera);
+window.addEventListener('photocoach:resume', resumeCamera);
 
 window.addEventListener('pagehide', () => {
   void camera.dispose();

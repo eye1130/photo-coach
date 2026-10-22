@@ -490,13 +490,21 @@ WebView 壳不依赖任何域名验证。代价：引擎性能略低于 Chrome�
 
 ### 14.6 壳的行为约定（改动前先读）
 
-- **`onPause` 停摄像头 + `onResume` 重载页面**。WebView 不派发 `visibilitychange`，不停轨道的话
-  退到后台相机还在取流、指示灯常亮。副作用：切后台再回来，选中的姿势回默认、拍照预览被清掉。
+- **切后台靠事件补位，不重载页面**。WebView 不派发 `visibilitychange`，所以原生在
+  `onPause` 派发 `photocoach:suspend`、`onResume` 派发 `photocoach:resume`，网页端
+  （`src/main.ts`）用与浏览器同一套 `suspendCamera` / `resumeCamera` 处理。
+  **事件名两端必须一致。** 不要改成 `loadUrl` 重载 —— 那会丢掉选中的姿势和拍照预览，
+  而且 `onResume` 紧跟 `onCreate` 触发，会白白加载两遍。
+- **切后台要真的停轨道**。`camera.pause()` 只停 rAF，摄像头仍在取流；浏览器会兜一层，
+  WebView 不会。所以 `camera.releaseCamera()` 负责停轨道，`resume()` 在轨道为空时重新取流。
+  刻意不复用 `dispose()` —— 它会把 wasm 模型一起关掉，回来要重新初始化。
 - **不做 edge-to-edge**。系统栏保持可见、刷成 `#05070A`。藏起来又没真正贴边会出现
   「顶部被压住 / 底部多黑边」，且 `env(safe-area-inset-*)` 两种布局下行为不一致。
 - **地址写死在 `app/build.gradle.kts` 的 `APP_URL`**。换部署地址时三处同步：该字段、
   `public/manifest.webmanifest` 的 `start_url`、§9.3。
 - **仓库不放 `gradle-wrapper.jar`**，CI 用 `gradle/actions/setup-gradle` 装 Gradle 8.7（配 AGP 8.5.2）。
+- **`NativeBridge` 必须是 public 类**。`@JavascriptInterface` 靠反射调用，非 public 的类
+  在部分 ROM 上会抛 `IllegalAccessException`，症状是「对象在、方法调不到」，极难排查。
 
 ### 14.7 壳工程刻意零依赖
 

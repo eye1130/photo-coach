@@ -94,24 +94,29 @@ public class MainActivity extends Activity {
         if (webView == null) return;
         webView.onResume();
         webView.resumeTimers();
-        // onPause 里停掉了摄像头轨道（见下），这里必须重载页面才能重新拿到画面。
-        // 不重载的话页面会停在一帧静止的旧画面上，看起来像卡死。
-        webView.loadUrl(START_URL);
+        // 通知页面「回到前台」，由网页端决定要不要重新取流。
+        // 不在这里 loadUrl：重载会把用户选中的姿势和拍照预览一起丢掉，
+        // 而且 onResume 在首次启动时紧跟 onCreate 触发，会白白加载两遍。
+        dispatchPageEvent("photocoach:resume");
     }
 
     @Override
     protected void onPause() {
         super.onPause();
         if (webView == null) return;
-        // 主动停掉摄像头：WebView 不像浏览器那样会派发 visibilitychange，
-        // 不管的话退到后台相机还在取流，耗电且指示灯常亮。
-        webView.evaluateJavascript(
-                "(function(){try{var v=document.getElementById('camera');"
-                        + "if(v&&v.srcObject){v.srcObject.getTracks().forEach(function(t){t.stop()});"
-                        + "v.srcObject=null;}}catch(e){}return 1;})()",
-                null);
+        // WebView 不像浏览器那样会派发 visibilitychange，这里替它补一发，
+        // 让网页端走自己的「释放摄像头」逻辑（src/main.ts 的 suspendCamera）。
+        dispatchPageEvent("photocoach:suspend");
         webView.onPause();
         webView.pauseTimers();
+    }
+
+    /** 往页面里派发一个自定义事件。事件名必须与 src/main.ts 的监听一致。 */
+    private void dispatchPageEvent(String name) {
+        if (webView == null) return;
+        webView.evaluateJavascript(
+                "(function(){try{window.dispatchEvent(new Event('" + name + "'));}catch(e){}return 1;})()",
+                null);
     }
 
     @Override
@@ -357,10 +362,14 @@ public class MainActivity extends Activity {
     /**
      * 暴露给页面的原生能力。名字必须与 src/ui.ts 里的 `PhotoCoachNative` 一致。
      *
-     * 注意：`@JavascriptInterface` 标注的方法运行在 WebView 的 JavaBridge 线程，
+     * 类声明成 public 而不是 private：`@JavascriptInterface` 是靠反射调用的，
+     * 非 public 的类在部分 ROM / WebView 版本上会抛 IllegalAccessException，
+     * 表现为「桥接对象存在但方法调不到」，很难排查。
+     *
+     * 注意：标注了 `@JavascriptInterface` 的方法运行在 WebView 的 JavaBridge 线程，
      * 不是主线程 —— 所以这里能放心做文件 IO，但弹 Toast 必须切回主线程。
      */
-    private class NativeBridge {
+    public class NativeBridge {
 
         @JavascriptInterface
         public void saveImage(String dataUrl, String fileName) {
