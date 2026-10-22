@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#05070a" />
+    <meta name="description" content="打开摄像头，实时告诉你站在哪里、怎么摆姿势、手往哪放。" />
+
+    <!-- ===== PWA：可安装 / 全屏启动 / 离线可用 ===== -->
+    <!-- base: './' → 引用一律用 ./ 开头，部署在子路径也能解析 -->
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="./icons/apple-touch-icon-180.png" />
+    <link rel="icon" type="image/png" sizes="32x32" href="./icons/favicon-32.png" />
+    <!-- iOS 添加到主屏后隐藏 Safari 地址栏（现代 Chrome 用 manifest.display=standalone） -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <!-- black-translucent：状态栏透明、内容可延伸到刘海下面，配合 style.css 的 --safe-top -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="拍照指导" />
+
+    <!-- 内联 SVG favicon：深色底 + 青色取景框人形，不引外部文件 -->
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23070a0e'/%3E%3Cg fill='none' stroke='%234ee6a8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M8 5H5v3M24 5h3v3M8 27H5v-3M24 27h3v-3'/%3E%3Ccircle cx='16' cy='11.5' r='2.6'/%3E%3Cpath d='M16 14.2v5.4M16 19.6 13.4 25M16 19.6 18.6 25M11.6 16.6h8.8'/%3E%3C/g%3E%3C/svg%3E"
+    />
+    <title>拍照指导</title>
+  </head>
+  <body>
+    <div id="app" data-phase="idle">
+      <!-- 取景画面 -->
+      <video id="camera" class="camera" playsinline autoplay muted></video>
+      <!-- 叠加层：网格 / 剪影 / 骨骼 / 水平仪 / 提示气泡 -->
+      <canvas id="overlay" class="overlay"></canvas>
+
+      <!-- 顶部状态条 -->
+      <header class="status-bar">
+        <span class="status-dot" aria-hidden="true"></span>
+        <span class="status-item" id="status-model">模型未加载</span>
+        <span class="status-item" id="status-fps">— FPS</span>
+        <span class="status-item" id="status-people">未检测到人</span>
+      </header>
+
+      <!-- 右侧竖排开关 -->
+      <div class="toggle-rail" role="group" aria-label="叠加层开关">
+        <button class="toggle-btn is-on" type="button" data-toggle="grid" aria-pressed="true" title="三分网格">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+            <rect x="3" y="3" width="18" height="18" rx="2.4" />
+            <path d="M9 3v18M15 3v18M3 9h18M3 15h18" />
+          </svg>
+        </button>
+        <button class="toggle-btn" type="button" data-toggle="skeleton" aria-pressed="false" title="骨骼线（调试用，默认关闭）">
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.6"
+            stroke-linecap="round"
+            aria-hidden="true"
+          >
+            <circle cx="12" cy="4.8" r="2.2" />
+            <path d="M12 7.4v6M12 9.4 7.6 12M12 9.4 16.4 12M12 13.4 8.8 19M12 13.4 15.2 19" />
+          </svg>
+        </button>
+        <button class="toggle-btn is-on" type="button" data-toggle="silhouette" aria-pressed="true" title="姿势剪影">
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.6"
+            stroke-linecap="round"
+            stroke-dasharray="2.4 2.4"
+            aria-hidden="true"
+          >
+            <circle cx="12" cy="4.8" r="2.4" />
+            <path d="M12 7.6c2.3 0 3.4 2 3.4 4.6V20M12 7.6c-2.3 0-3.4 2-3.4 4.6V20M8.6 20h6.8" />
+          </svg>
+        </button>
+        <button class="toggle-btn" type="button" data-toggle="voice" aria-pressed="false" title="语音提示">
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.6"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M4 9.6v4.8h2.8L11.4 18V6L6.8 9.6H4z" />
+            <path d="M14.8 9.4a4.2 4.2 0 0 1 0 5.2" />
+            <path d="M17.4 7.2a7.4 7.4 0 0 1 0 9.6" />
+          </svg>
+        </button>
+      </div>
+
+      <!-- 底部：姿势横滑条 + 快门（快门绝对定位在姿势条上方，不参与姿势条布局） -->
+      <div class="bottom-bar">
+        <div class="scene-tabs" id="scene-tabs" role="tablist" aria-label="拍摄场景"></div>
+        <div class="pose-strip" id="pose-strip" role="tablist" aria-label="姿势选择"></div>
+
+        <button class="shutter" id="shutter" type="button" title="拍照" aria-label="拍照">
+          <span class="shutter-ring" aria-hidden="true"></span>
+        </button>
+      </div>
+
+      <!-- 首屏遮罩 -->
+      <div class="start-overlay" id="start-overlay">
+        <div class="start-card">
+          <h1 class="start-title">拍照指导</h1>
+          <p class="start-sub">
+            把手机举起来对着朋友，<br />
+            屏幕会告诉你：站哪儿、怎么摆、手往哪放。
+          </p>
+          <div class="loading-block" id="start-loading" hidden>
+            <div class="loading-bar"><span></span></div>
+            <p class="loading-text" id="loading-text">加载姿态模型运行时…</p>
+          </div>
+          <button class="primary-btn" id="start-btn" type="button">开启摄像头</button>
+          <p class="start-error" id="start-error" hidden></p>
+          <p class="start-tip">需要摄像头权限 · 建议用后置摄像头 · 手机端需 HTTPS 访问</p>
+        </div>
+      </div>
+
+      <!-- 拍照预览 -->
+      <div class="preview" id="preview" hidden>
+        <div class="preview-stage">
+          <img id="preview-img" alt="拍摄结果" />
+        </div>
+        <div class="preview-actions">
+          <a class="ghost-btn primary" id="btn-save" download="photo.jpg">保存到相册</a>
+          <button class="ghost-btn" id="btn-close" type="button">关闭</button>
+        </div>
+      </div>
+
+      <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    </div>
+
+    <!-- MediaPipe Pose（legacy Solutions，IIFE 全局脚本，挂 window.Pose）
+         用 ./ 而非 / 开头：与 base: './' 一致，部署在子路径时也能解析；
+         SW 预缓存清单里也是 './mp/pose.js'，两者必须是同一个 URL。 -->
+    <script src="./mp/pose.js"></script>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

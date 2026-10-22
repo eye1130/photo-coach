@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      刻意不做 edge-to-edge / 隐藏状态栏：
+      网页端 style.css 用 env(safe-area-inset-*) 做安全区，只有在 edge-to-edge 布局下
+      这些值才非零。一旦壳这边把系统栏藏起来又没让 WebView 真正贴边，就会出现
+      「顶部被状态栏压住一截」或「底部多出一块黑边」。保持系统栏可见、颜色刷成页面底色，
+      视觉上就是无缝的，且两端行为一致。
+    -->
+    <style name="AppTheme" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/appBackground</item>
+        <item name="android:colorBackground">@color/appBackground</item>
+        <item name="android:statusBarColor">@color/appBackground</item>
+        <item name="android:navigationBarColor">@color/appBackground</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>

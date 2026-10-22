@@ -1,0 +1,32 @@
+node_modules/
+dist/
+.DS_Store
+*.local
+.tmp-test/
+vite.config.ts.timestamp-*.mjs
+
+# .probe/ 是本地探针与素材工具，共 462MB（其中 poses-src/ 379MB 是 AI 原始出图，
+# 可由 ImageGen 重新生成），整体不入库。
+# 例外：图标生成脚本 —— 它是 android/ 下所有 mipmap 图标的唯一来源，
+# 换图标时必须跟着改，所以必须随仓库走。
+.probe/*
+!.probe/make_android_icons.py
+
+# ---------------------------------------------------------------- Android 壳
+out/
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.idea/
+android/captures/
+
+# 正式签名密钥绝不入库。CI 用 Android SDK 自带的 debug.keystore（公开、跨机器一致），
+# 仓库里不需要放任何 keystore。见 android/README.md。
+*.keystore
+*.jks
+
+# ---------------------------------------------------------------- 工具本地状态
+# 与本项目源码无关，属于 IDE / Agent 的本地状态文件
+.workbuddy/
+.wbapp_*.genie

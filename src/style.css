@@ -1,0 +1,599 @@
+/* ==========================================================================
+   拍照指导 —— 暗色相机 UI（移动端竖屏优先，零外部字体/图标）
+   ========================================================================== */
+
+:root {
+  --bg: #05070a;
+  --panel: rgba(16, 20, 26, 0.72);
+  --panel-border: rgba(255, 255, 255, 0.12);
+  --text: #eef3fa;
+  --text-dim: #93a2b7;
+  --accent: #4ee6a8;
+  --accent-soft: rgba(78, 230, 168, 0.16);
+  --warn: #ffb648;
+  --danger: #ff5f5f;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  background: #000;
+}
+
+body {
+  font-family: 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', system-ui, -apple-system, sans-serif;
+  color: var(--text);
+  overflow: hidden;
+  overscroll-behavior: none;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+
+#app {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background: #000;
+}
+
+/* ---------- 取景 + 叠加层 ---------- */
+
+.camera {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: #000;
+}
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* ---------- 顶部状态条 ---------- */
+
+.status-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: calc(var(--safe-top) + 8px) 14px 12px;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  color: var(--text-dim);
+  background: linear-gradient(to bottom, rgba(0, 0, 0, 0.6), rgba(0, 0, 0, 0));
+  pointer-events: none;
+}
+
+.status-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #64748b;
+  box-shadow: 0 0 0 3px rgba(100, 116, 139, 0.16);
+  transition: background 0.2s ease;
+}
+
+#app[data-phase='loading'] .status-dot {
+  background: var(--warn);
+  animation: dot-pulse 1.1s ease-in-out infinite;
+}
+
+#app[data-phase='ready'] .status-dot {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px rgba(78, 230, 168, 0.2);
+}
+
+#app[data-phase='error'] .status-dot {
+  background: var(--danger);
+}
+
+.status-item {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- 右侧开关组 ---------- */
+
+.toggle-rail {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.toggle-btn {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 1px solid var(--panel-border);
+  background: var(--panel);
+  color: #b6c2d4;
+  cursor: pointer;
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  transition: transform 0.12s ease, background 0.18s ease, color 0.18s ease, border-color 0.18s ease;
+}
+
+.toggle-btn svg {
+  width: 22px;
+  height: 22px;
+}
+
+.toggle-btn:active {
+  transform: scale(0.92);
+}
+
+.toggle-btn.is-on {
+  color: #05231a;
+  background: var(--accent);
+  border-color: rgba(255, 255, 255, 0.4);
+  box-shadow: 0 6px 18px rgba(78, 230, 168, 0.32);
+}
+
+/* ---------- 底部姿势条 ---------- */
+
+.bottom-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 5;
+  padding: 26px 0 calc(var(--safe-bottom) + 12px);
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.82), rgba(0, 0, 0, 0.35) 55%, rgba(0, 0, 0, 0));
+}
+
+/* ---------- 场景 Tab ---------- */
+
+.scene-tabs {
+  display: flex;
+  gap: 8px;
+  padding: 0 14px 9px;
+}
+
+.scene-tab {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 5px 15px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(219, 228, 240, 0.7);
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.4;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: background 0.16s ease, color 0.16s ease, border-color 0.16s ease;
+}
+
+.scene-tab.is-active {
+  border-color: rgba(78, 230, 168, 0.72);
+  background: var(--accent-soft);
+  color: #ffffff;
+}
+
+.pose-strip {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x proximity;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  padding: 2px 14px 4px;
+}
+
+.pose-strip::-webkit-scrollbar {
+  display: none;
+}
+
+.pose-item {
+  flex: 0 0 auto;
+  scroll-snap-align: start;
+  width: 64px;
+  margin: 0;
+  padding: 7px 4px 6px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  border-radius: 14px;
+  border: 1.5px solid transparent;
+  background: rgba(255, 255, 255, 0.07);
+  color: #dbe4f0;
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 1.25;
+  cursor: pointer;
+  transition: background 0.16s ease, border-color 0.16s ease, transform 0.12s ease, color 0.16s ease;
+}
+
+.pose-item:active {
+  transform: scale(0.95);
+}
+
+.pose-item.is-active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: #ffffff;
+  box-shadow: 0 4px 16px rgba(78, 230, 168, 0.22);
+}
+
+.pose-item .pose-thumb {
+  width: 44px;
+  height: 44px;
+  display: block;
+  border-radius: 6px;
+}
+
+/* 未选中的缩略图压暗，选中态更突出 */
+.pose-item:not(.is-active) .pose-icon {
+  opacity: 0.62;
+}
+
+.pose-item .pose-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- 快门 ---------- */
+
+/*
+ * 快门挂在 .bottom-bar 里，用 bottom: calc(100% + 8px) 锚定在姿势条上方，
+ * 因此与姿势条高度解耦：无论姿势条多高，快门永远在它上方 34px 左右，且不挤占布局。
+ */
+.shutter {
+  position: absolute;
+  right: 16px;
+  bottom: calc(100% + 8px);
+  z-index: 6;
+  width: 70px;
+  height: 70px;
+  padding: 0;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition: transform 0.1s ease;
+}
+
+.shutter-ring {
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  border: 4px solid #ffffff;
+  background: rgba(255, 255, 255, 0.26);
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.35), 0 6px 20px rgba(0, 0, 0, 0.4);
+  transition: transform 0.1s ease, background 0.1s ease;
+}
+
+.shutter:active .shutter-ring {
+  transform: scale(0.86);
+  background: rgba(255, 255, 255, 0.62);
+}
+
+.shutter.is-flashing .shutter-ring {
+  transform: scale(0.8);
+  background: #ffffff;
+}
+
+/* ---------- 首屏遮罩 ---------- */
+
+.start-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 28px;
+  background:
+    radial-gradient(120% 80% at 50% 0%, rgba(30, 48, 62, 0.9), rgba(5, 7, 10, 0.98) 62%),
+    #05070a;
+  transition: opacity 0.32s ease, visibility 0.32s ease;
+}
+
+.start-overlay.is-hidden {
+  opacity: 0;
+  visibility: hidden;
+}
+
+.start-card {
+  width: 100%;
+  max-width: 340px;
+  text-align: center;
+}
+
+.start-title {
+  margin: 0 0 14px;
+  font-size: 27px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+}
+
+.start-sub {
+  margin: 0 0 30px;
+  color: var(--text-dim);
+  font-size: 14px;
+  line-height: 1.85;
+}
+
+.primary-btn {
+  width: 100%;
+  padding: 15px 24px;
+  border: none;
+  border-radius: 999px;
+  background: linear-gradient(135deg, var(--accent), #35d0e0);
+  color: #04211a;
+  font-family: inherit;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: transform 0.12s ease, opacity 0.2s ease, box-shadow 0.2s ease;
+  box-shadow: 0 10px 28px rgba(78, 230, 168, 0.28);
+}
+
+.primary-btn:active {
+  transform: scale(0.975);
+}
+
+.primary-btn[disabled] {
+  opacity: 0.55;
+  box-shadow: none;
+  cursor: default;
+}
+
+.start-tip {
+  margin: 18px 0 0;
+  color: #64748b;
+  font-size: 11px;
+  line-height: 1.7;
+}
+
+.start-error {
+  margin: 16px 0 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(255, 95, 95, 0.12);
+  border: 1px solid rgba(255, 95, 95, 0.32);
+  color: #ffb3b3;
+  font-size: 12px;
+  line-height: 1.6;
+  text-align: left;
+  word-break: break-word;
+}
+
+/* 加载中：骨架式进度条 + 阶段文案 */
+.loading-block {
+  margin: 0 0 24px;
+}
+
+.loading-bar {
+  position: relative;
+  height: 4px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.loading-bar > span {
+  position: absolute;
+  inset: 0;
+  width: 40%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  animation: loading-sweep 1.15s ease-in-out infinite;
+}
+
+.loading-text {
+  margin: 10px 0 0;
+  color: #8fa3ba;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+}
+
+/* ---------- 拍照预览 ---------- */
+
+.preview {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  background: rgba(3, 4, 6, 0.97);
+  animation: fade-in 0.2s ease both;
+}
+
+.preview[hidden] {
+  display: none;
+}
+
+.preview-stage {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  padding: calc(var(--safe-top) + 12px) 12px 12px;
+}
+
+.preview-stage img {
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: 12px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.6);
+}
+
+.preview-actions {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 12px;
+  padding: 4px 16px calc(var(--safe-bottom) + 18px);
+}
+
+.ghost-btn {
+  flex: 1 1 0;
+  padding: 14px 18px;
+  border-radius: 999px;
+  border: 1px solid var(--panel-border);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 500;
+  text-align: center;
+  text-decoration: none;
+  cursor: pointer;
+  transition: transform 0.12s ease, background 0.16s ease;
+}
+
+.ghost-btn:active {
+  transform: scale(0.97);
+}
+
+.ghost-btn.primary {
+  border-color: transparent;
+  background: var(--accent);
+  color: #04211a;
+  font-weight: 600;
+}
+
+/* ---------- 轻提示 ---------- */
+
+.toast {
+  position: absolute;
+  left: 50%;
+  bottom: calc(var(--safe-bottom) + 108px);
+  z-index: 40;
+  transform: translate(-50%, 8px);
+  max-width: 78%;
+  padding: 9px 16px;
+  border-radius: 999px;
+  background: rgba(8, 12, 18, 0.86);
+  border: 1px solid var(--panel-border);
+  color: var(--text);
+  font-size: 13px;
+  text-align: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.toast.is-visible {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+/* ---------- 动画 ---------- */
+
+@keyframes dot-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@keyframes loading-sweep {
+  0% {
+    transform: translateX(-110%);
+  }
+  100% {
+    transform: translateX(320%);
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* ---------- 桌面端：把画面收成手机比例，方便自测 ---------- */
+
+@media (min-width: 760px) {
+  body {
+    background: radial-gradient(circle at 50% 0%, #131a22, #05070a 72%);
+  }
+
+  #app {
+    left: calc(50% - 230px);
+    right: auto;
+    width: 460px;
+    border-left: 1px solid rgba(255, 255, 255, 0.07);
+    border-right: 1px solid rgba(255, 255, 255, 0.07);
+    box-shadow: 0 0 90px rgba(0, 0, 0, 0.85);
+  }
+
+  .pose-strip {
+    padding-right: 14px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ---------- PWA：可点击的 toast（「有新版本，点这里刷新」） ---------- */
+
+/*
+ * 平时 .toast 是 role="status" 的只读提示，且 pointer-events: none（绝不挡住下方的
+ * 快门和姿势条）。只有 is-action 这一种场景才临时放开点击，点击后由 ui.ts 移除该类，
+ * 恢复成普通 toast —— 所以这些样式不会影响任何现有提示。
+ */
+.toast.is-action {
+  pointer-events: auto;
+  cursor: pointer;
+  border-color: rgba(126, 216, 255, 0.55);
+  color: #d6f1ff;
+  /* 可点击时补一点上下留白，手指更容易点中（只在 is-action 下生效） */
+  padding: 11px 18px;
+}
+
+.toast.is-action:hover,
+.toast.is-action:focus-visible {
+  background: rgba(14, 26, 36, 0.94);
+  border-color: rgba(126, 216, 255, 0.85);
+  outline: none;
+}

@@ -1,0 +1,18 @@
+{
+  "name": "photo-coach",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "拍照指导：实时姿势与构图指导相机（MediaPipe Pose + 原生 TypeScript）",
+  "scripts": {
+    "dev": "vite",
+    "dev:https": "vite --mode https",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --host"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-basic-ssl": "^1.2.0",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.10"
+  }
+}

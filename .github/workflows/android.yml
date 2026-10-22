@@ -1,0 +1,81 @@
+name: Build Android APK
+
+# 只在动了壳工程 / 工作流本身时触发，避免每次改网页都跑一遍 Android 构建。
+# 需要手动出包时用 workflow_dispatch（Actions 页面上的 Run workflow）。
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'android/**'
+      - '.github/workflows/android.yml'
+  pull_request:
+    paths:
+      - 'android/**'
+      - '.github/workflows/android.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: assembleDebug
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # AGP 8.5 要求 JDK 17
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # 仓库里刻意不放 gradle-wrapper.jar（二进制不方便 review，也不该手工提交），
+      # 改为由 action 安装指定版本的 Gradle。版本必须与 AGP 8.5.2 兼容（>= 8.7）。
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+
+      # runner 自带 Android SDK，但 platforms/android-34 不一定齐，显式装一次更稳。
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platforms;android-34 build-tools;34.0.0 platform-tools'
+
+      - name: Build debug APK
+        working-directory: android
+        run: gradle :app:assembleDebug --no-daemon --stacktrace
+
+      - name: Collect APK
+        run: |
+          mkdir -p out
+          cp android/app/build/outputs/apk/debug/app-debug.apk \
+             "out/photo-coach-${GITHUB_RUN_NUMBER}.apk"
+          ls -lh out
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: photo-coach-apk
+          path: out/*.apk
+          if-no-files-found: error
+          retention-days: 90
+
+  web:
+    name: 网页端类型检查与构建
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci
+
+      # npm run build = tsc --noEmit && vite build（见 package.json）
+      - run: npm run build
