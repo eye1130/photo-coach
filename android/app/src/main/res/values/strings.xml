@@ -1,4 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">拍照指导</string>
+
+    <!-- 实验分支专用：验证版与正式版共存时，桌面图标必须能一眼区分，
+         否则两个都叫「拍照指导」，很容易点错。
+         合并回 main 前连同 build.gradle.kts 的 applicationId 一起改回。 -->
+    <string name="app_name_probe">拍照指导·验证</string>
 </resources>
