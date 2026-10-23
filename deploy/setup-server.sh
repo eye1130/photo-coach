@@ -259,12 +259,21 @@ write_http_conf() {
 }
 
 write_ssl_conf() {
-  # nginx 1.25.1 起 http2 从 listen 参数改成独立指令，写法必须跟着版本走
-  local http2_line=""
-  if [ "$(printf '%s\n1.25.1\n' "$NGINX_VER" | sort -V | head -1)" = "$NGINX_VER" ]; then
+  # nginx 1.25.1 起 http2 从 listen 的参数改成独立指令，写法必须跟着版本走：
+  #   1.24  → listen 443 ssl http2;
+  #   1.25+ → listen 443 ssl;  +  http2 on;
+  # 判断方式：两个版本号排序后取较小的那个，如果它就是 1.25.1，
+  # 说明当前版本 >= 1.25.1。（之前写成拿它和 $NGINX_VER 比，逻辑正好反了，
+  # 导致 1.24 上也写了 `http2 on;`，nginx 直接 unknown directive 起不来。）
+  local h2_listen="" http2_line=""
+  if [ "$(printf '%s\n1.25.1\n' "$NGINX_VER" | sort -V | head -1)" = "1.25.1" ]; then
     http2_line="http2 on;"
+  else
+    h2_listen=" http2"
   fi
-  sed -e "s|__DOMAIN__|${DOMAIN}|g" -e "s|__HTTP2__|${http2_line}|g" \
+  sed -e "s|__DOMAIN__|${DOMAIN}|g" \
+      -e "s|__H2LISTEN__|${h2_listen}|g" \
+      -e "s|__HTTP2__|${http2_line}|g" \
       "$SCRIPT_DIR/nginx-ssl.conf.tpl" > "$NGINX_CONF"
 }
 
