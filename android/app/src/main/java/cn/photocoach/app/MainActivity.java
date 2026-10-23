@@ -59,16 +59,16 @@ public class MainActivity extends Activity {
 
     private static final String TAG = "PhotoCoach";
 
-    /** 线上地址（含 sharecode）。与 app/build.gradle.kts 的 APP_URL 同源，改一处即可。 */
+    /** 线上地址。与 app/build.gradle.kts 的 APP_URL 同源，改一处即可。 */
     private static final String START_URL = BuildConfig.APP_URL;
 
     /**
      * 允许在 WebView 内打开的 host。其余一律交给系统浏览器。
      * 换部署地址时必须与 `app/build.gradle.kts` 的 APP_URL 同步。
      *
-     * 注意：发布平台每次部署都会换域名，这个值只对当前这一版有效。
+     * 2026-10-23 起是自有域名，不再随每次部署变化。
      */
-    private static final String APP_HOST = "2e6d73676aed42759e5e88229b9d0269.sg.agentos-app.run";
+    private static final String APP_HOST = "photo.galois1130.site";
 
     /** 相册里的子目录名 */
     private static final String GALLERY_FOLDER = "拍照指导";
@@ -293,7 +293,9 @@ public class MainActivity extends Activity {
         if (!scheme.equals("https") && !scheme.equals("http")) return false;
         String host = uri.getHost();
         if (host == null) return false;
-        return host.equals(APP_HOST) || host.endsWith(".workbuddy.host");
+        // 只放行自有域名。之前为了兼容托管平台的 .workbuddy.host 兜底已去掉 ——
+        // 那是临时方案，留着等于给自己开一个不该存在的入口。
+        return host.equals(APP_HOST);
     }
 
     private void openExternally(Uri uri) {

@@ -347,8 +347,25 @@ Fashion illustration croquis style, very minimal detail. Pose: {POSE}
 
 ### 9.3 部署
 
-- 用 `workbuddy_sites_deploy`，`directory` 必须是 **`dist/`**，不是项目根。
-- **⚠️ 每次部署都会拿到一条新链接，旧链接立刻 400。** 详见 §14.8，这是当前最大的架构隐患。
+**2026-10-23 起改为自有服务器，域名固定 `https://photo.galois1130.site`。**
+完整操作见 `deploy/README.md`，这里只记结论和原因。
+
+| 环节 | 做法 |
+| --- | --- |
+| 网页包 | `.github/workflows/web.yml` push 后自动构建，发到固定 Release `web-latest` |
+| 服务器 | 华为云 ECS + nginx，静态目录 `/var/www/photo-coach` |
+| 更新 | 服务器上 `bash deploy/update.sh`，3~5 秒，不动 APK |
+| 证书 | acme.sh + Let's Encrypt，自动续期 |
+| 配置 | `deploy/nginx-ssl.conf.tpl`，缓存策略的每条原因写在注释里 |
+
+**为什么服务器不自己构建**：要在服务器装 Node，华为云 EulerOS 版本兼容坑多。
+GitHub Actions 构建好、服务器只解压，少一层依赖就少一类故障。
+
+**为什么用子域名 `photo.` 而不是主域名**：主域名和 `www` 上还挂着两个旧服务，
+动主域名会带崩它们。子域名完全独立。
+
+**⚠️ 早期托管方案（已废弃）**：`workbuddy_sites_deploy` 每次部署都会换一条新链接，
+旧链接立刻 400（详见 §14.8）。只在应急时还能用，日常不要再用。
 
 **关于 `start_url` 与 sharecode（历史遗留，现已不需要）**
 
@@ -552,34 +569,31 @@ WebView 壳不依赖任何域名验证。代价：引擎性能略低于 Chrome�
 好处是 CI 只需 AGP 一个插件，构建失败面最小。代价是不能用 ViewBinding，但总共就一个
 Activity + 一个 WebView，手写足够。**加依赖前先想清楚值不值。**
 
-### 14.8 ⚠️ 发布域名每次都会变（当前最大隐患）
+### 14.8 域名漂移（2026-10-23 已解决）
 
-**现象**（2026-10-23 实测，连续部署三次）：
+**曾经的坑**：早期托管平台每次部署都换一条新链接，旧链接立刻 400。
+`APP_URL` 写死在 APK 里，于是「每改一次网页就要重新出包 + 用户重装」，
+WebView 壳最大的优势（网页独立更新）完全消失。
+
+实测三次，`sandboxId` 都是同一个，但 `shareLink` 每次都变，
+`domainPrefix` 参数不起作用（域名是随机 hash，不是 `photo-coach`）：
 
 | 部署 | 链接 | 下一次部署后 |
 | --- | --- | --- |
 | 第 1 次 | `8dec044d…sg.agentos-app.run` | **400** |
 | 第 2 次 | `242ff01c…sg.agentos-app.run` | **400** |
-| 第 3 次 | `2e6d7367…sg.agentos-app.run` | 当前有效 |
+| 第 3 次 | `2e6d7367…sg.agentos-app.run` | 已废弃 |
 
-`sandboxId` 三次都是同一个，但 `shareLink` 每次都是新的，旧域名立刻 400。
-`domainPrefix` 参数不起作用（域名是随机 hash，不是 `photo-coach`）。
+**现在的解法**：自有域名 `https://photo.galois1130.site`（华为云 ECS + nginx）。
+`APP_URL` / `APP_HOST` 从此**不需要再改**，网页更新走 `deploy/update.sh`。
+详细部署说明见 `deploy/README.md`。
 
-**后果**：`APP_URL` 写死在 APK 里，所以**每部署一次网页，就必须重新出包 + 用户重装 APK**。
-「改网页不用重新出包」这个 WebView 壳原本的核心优势，在当前托管平台上不成立。
+**唯一还需要重出包的情况**：换域名、改壳代码、改权限声明。
 
-**短期做法**（每次发布都要走一遍）：
-
-1. 部署 `dist/` → 拿到新链接
-2. 同步改三处：`android/app/build.gradle.kts` 的 `APP_URL`、
-   `MainActivity.java` 的 `APP_HOST`、`public/manifest.webmanifest`（现在只需 `./`）
-3. `versionCode` +1、`versionName` 升一位
-4. push → CI → 下载 APK → 用户重装
-
-**长期方案（待做）**：把 `dist/` 打进 APK 的 `assets/web/`，用
+**历史备选方案（未实施，留档）**：把 `dist/` 打进 APK 的 `assets/web/`，用
 `shouldInterceptRequest` 把 `https://appassets.androidplatform.net/web/...` 映射到 assets。
-好处是彻底摆脱域名依赖、离线天然可用、启动不用下载 18MB；代价是网页更新必须重新出包。
-但既然域名本来就不稳定，「网页独立更新」早已是幻觉，这个代价其实没增加。
+好处是彻底摆脱域名依赖、离线天然可用、启动不用下载 18MB。
 注意：assets 走 `file://` 会失去安全上下文、`getUserMedia` 直接不可用，
 必须用 `https://` 的自定义域名映射，不能图省事用 `file:///android_asset/`。
+现在域名稳定了，这个方案收益不大，暂不做。
 

@@ -1,0 +1,65 @@
+name: Publish Web Bundle
+
+# 把 dist/ 打成 dist.tar.gz 发到固定 tag 的 Release。
+# 服务器只需要 curl 这一个地址就能拿到最新网页，彻底绕开「每次部署换域名」。
+#
+# 下载地址（固定不变）：
+#   https://github.com/eye1130/photo-coach/releases/download/web-latest/dist.tar.gz
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'public/**'
+      - 'index.html'
+      - 'vite.config.ts'
+      - 'tsconfig.json'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/web.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: web-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    name: 构建并发布网页包
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci
+
+      # npm run build = tsc --noEmit && vite build（见 package.json）
+      - run: npm run build
+
+      - name: 打包
+        run: |
+          tar -czf dist.tar.gz -C dist .
+          ls -lh dist.tar.gz
+          echo "文件数：$(tar -tzf dist.tar.gz | wc -l)"
+
+      # 用固定 tag 复用同一个 Release，asset 覆盖更新。
+      # 先删后建会让下载地址短暂 404，所以这里是「有就覆盖，没有才建」。
+      - name: 发布到 web-latest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view web-latest >/dev/null 2>&1; then
+            gh release upload web-latest dist.tar.gz --clobber
+          else
+            gh release create web-latest dist.tar.gz \
+              --title "Web bundle (latest)" \
+              --notes "网页包最新版，由 commit ${{ github.sha }} 自动构建。服务器用 update.sh 拉取。"
+          fi
+          echo "下载地址：https://github.com/${{ github.repository }}/releases/download/web-latest/dist.tar.gz"

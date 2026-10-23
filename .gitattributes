@@ -1,0 +1,31 @@
+# ============================================================================
+# 换行符规则
+#
+# 本机 core.autocrlf=true，检出的文件是 CRLF。Shell 脚本带着 \r 上传到 Linux
+# 会直接炸在 `set -euo pipefail` 那行（报 pipefail\r: command not found），
+# 而且报错信息完全看不出是换行符问题。所以这里强制 LF。
+# ============================================================================
+
+* text=auto
+
+*.sh    text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.conf  text eol=lf
+*.tpl   text eol=lf
+Dockerfile text eol=lf
+
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+
+# 二进制：不要做任何转换
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.webp  binary
+*.ico   binary
+*.wasm  binary
+*.tflite binary
+*.apk   binary
+*.keystore binary
+*.jks   binary
