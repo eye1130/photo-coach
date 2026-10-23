@@ -62,8 +62,13 @@ public class MainActivity extends Activity {
     /** 线上地址（含 sharecode）。与 app/build.gradle.kts 的 APP_URL 同源，改一处即可。 */
     private static final String START_URL = BuildConfig.APP_URL;
 
-    /** 允许在 WebView 内打开的 host。其余一律交给系统浏览器。 */
-    private static final String APP_HOST = "photo-coach-01631.app.workbuddy.host";
+    /**
+     * 允许在 WebView 内打开的 host。其余一律交给系统浏览器。
+     * 换部署地址时必须与 `app/build.gradle.kts` 的 APP_URL 同步。
+     *
+     * 注意：发布平台每次部署都会换域名，这个值只对当前这一版有效。
+     */
+    private static final String APP_HOST = "2e6d73676aed42759e5e88229b9d0269.sg.agentos-app.run";
 
     /** 相册里的子目录名 */
     private static final String GALLERY_FOLDER = "拍照指导";
@@ -385,7 +390,8 @@ public class MainActivity extends Activity {
             // Android 9 及以下，往 MediaStore 插记录需要写外部存储权限
             requestPermissions(
                     new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE}, REQUEST_STORAGE);
-            toast("请允许存储权限后再点一次");
+            toast("请允许存储权限后再按快门");
+            notifyCameraFailed();
             return;
         }
 
@@ -395,10 +401,12 @@ public class MainActivity extends Activity {
         } catch (Exception error) {
             Log.w(TAG, "创建拍照输出位置失败", error);
             toast("无法准备拍照存储位置");
+            notifyCameraFailed();
             return;
         }
         if (output == null) {
             toast("无法准备拍照存储位置");
+            notifyCameraFailed();
             return;
         }
 
@@ -412,7 +420,24 @@ public class MainActivity extends Activity {
             pendingCameraUri = null;
             deleteSilently(output);
             toast("启动相机失败：" + error.getClass().getSimpleName());
+            notifyCameraFailed();
         }
+    }
+
+    /**
+     * 告诉页面「系统相机没打开，请自己抓帧」。
+     *
+     * 快门现在直接跳系统相机，跳转前网页会主动放掉 getUserMedia 的流。
+     * 一旦跳转没成功（没相机 App、权限不足、存储异常），既不会有 onResume
+     * 来兜底，也不会有人重新取流 —— 不通知的话用户按快门毫无反应，
+     * 取景画面还黑着，只能杀进程重开。
+     *
+     * 网页端收到后会自己恢复取景并回退到 WebRTC 抓帧（见 src/main.ts）。
+     */
+    private void notifyCameraFailed() {
+        if (webView == null) return;
+        // 让用户先看清 toast，再恢复画面
+        webView.postDelayed(() -> dispatchPageEvent("photocoach:camera-failed"), 300);
     }
 
     /** 预先在 MediaStore 里占一个位置，系统相机直接往这个 uri 写。 */

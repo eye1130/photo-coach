@@ -249,11 +249,6 @@ const ui = new Ui(POSE_TEMPLATES, state.toggles, {
   onPreviewClose: () => {
     // 关闭预览后恢复取景（video 一直在播放，无需额外处理）
   },
-  onSystemCameraRequest: () => {
-    // 系统相机要独占后置摄像头，先把我们的流放掉，否则它会黑屏或直接打不开。
-    // 回来后由原生派发 `photocoach:resume` 自动恢复（见下方事件监听）。
-    suspendCamera();
-  },
 });
 
 ui.setPhase('idle');
@@ -331,9 +326,53 @@ async function startCamera(): Promise<void> {
 
 // ---------------------------------------------------------------- 拍照
 
+/**
+ * 取 Android 壳注入的原生拍照桥接（浏览器里返回 null）。
+ *
+ * 只在 `openSystemCamera` 真的存在时才算数 —— 老版本 APK 没有这个方法，
+ * 必须能退回网页端自己的抓帧逻辑，否则快门按下去什么都不发生。
+ */
+function systemCameraBridge(): { openSystemCamera: () => void } | null {
+  const bridge = (
+    window as unknown as { PhotoCoachNative?: { openSystemCamera?: () => void } }
+  ).PhotoCoachNative;
+  if (!bridge || typeof bridge.openSystemCamera !== 'function') return null;
+  return bridge as { openSystemCamera: () => void };
+}
+
 async function takePhoto(): Promise<void> {
   if (state.phase !== 'ready') return;
   ui.flashShutter();
+
+  // 壳内：快门直接交给系统相机。
+  //
+  // 为什么不在 App 内抓帧出图：WebView 的 getUserMedia 走的是**视频流通道**，
+  // 分辨率受 WebRTC 采集能力限制，竖屏裁切后宽度只剩采集高度的 0.46 倍
+  // （1080p 采集 → 照片 499×1080），而且拿不到相机硬件的 OIS 防抖。
+  // 系统相机是硬件级拍照通道，画质、防抖、多帧合成都是这台设备的上限。
+  //
+  // 代价：会离开指导界面。但此时用户已经照着剪影把姿势摆好了，
+  // 跳过去直接按快门即可，不需要再看指导。
+  const bridge = systemCameraBridge();
+  if (bridge) {
+    // 必须先把摄像头让出来，否则系统相机会黑屏或打不开。
+    // 拍完回来由原生 onResume 派发 photocoach:resume 自动恢复取景。
+    suspendCamera();
+    bridge.openSystemCamera();
+    return;
+  }
+
+  // 浏览器（或老版本 APK）：保持原来的抓帧 + 预览
+  await captureWithWebRtc();
+}
+
+/**
+ * 回退路径：从 WebRTC 视频流抓帧。
+ *
+ * 浏览器里这是主路径；壳里只在系统相机打不开时兜底
+ * （见下方 `photocoach:camera-failed` 监听）。
+ */
+async function captureWithWebRtc(): Promise<void> {
   try {
     const blob = await camera.capture();
     ui.showPreview(blob);
@@ -404,6 +443,23 @@ document.addEventListener('visibilitychange', () => {
  */
 window.addEventListener('photocoach:suspend', suspendCamera);
 window.addEventListener('photocoach:resume', resumeCamera);
+
+/**
+ * 壳里系统相机没打开时，原生派发这个事件（见 `MainActivity.notifyCameraFailed`）。
+ *
+ * 快门是直接跳系统相机的，跳转前已经放掉了摄像头。跳转失败时既没有
+ * onResume 兜底、也没人重新取流 —— 这里必须先恢复取景，再回退到 WebRTC 抓帧，
+ * 否则用户按一下快门就卡在黑板上了。
+ *
+ * 延迟 1.2 秒是因为 `camera.resume()` 内部重新 `getUserMedia` 是异步的，
+ * 立刻抓帧只会拿到空画面。
+ */
+window.addEventListener('photocoach:camera-failed', () => {
+  resumeCamera();
+  window.setTimeout(() => {
+    void captureWithWebRtc();
+  }, 1200);
+});
 
 window.addEventListener('pagehide', () => {
   void camera.dispose();

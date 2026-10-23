@@ -18,7 +18,7 @@
 | 剪影素材 | **20 个**有真实线稿素材，7 个走程序化几何人形兜底 |
 | 形态 | PWA（可添加到手机主屏，全屏独立窗口，离线可用） |
 | Android APK | WebView 壳（`android/`），GitHub Actions 云端出包，见 §14 |
-| 线上地址 | `https://photo-coach-01631.app.workbuddy.host/?sharecode=KW332RH4SO` |
+| 线上地址 | `https://2e6d73676aed42759e5e88229b9d0269.sg.agentos-app.run`（**每次部署都会变，见 §14.8**） |
 | Service Worker | `VERSION = 'v3'` |
 
 **立刻能跑**
@@ -348,18 +348,15 @@ Fashion illustration croquis style, very minimal detail. Pose: {POSE}
 ### 9.3 部署
 
 - 用 `workbuddy_sites_deploy`，`directory` 必须是 **`dist/`**，不是项目根。
-- 同一个 app 覆盖发布，**sharecode 不变**。
+- **⚠️ 每次部署都会拿到一条新链接，旧链接立刻 400。** 详见 §14.8，这是当前最大的架构隐患。
 
-**⚠️ `start_url` 里为什么带 `?sharecode=`**
+**关于 `start_url` 与 sharecode（历史遗留，现已不需要）**
 
-托管平台用 `?sharecode=XXX` 当访问凭证，响应 `Set-Cookie: __wb_rsc=...; Max-Age=2592000`（**30 天**、HttpOnly）。
-不带凭证访问 `/`、`/index.html`、`/sw.js` **一律 403**。
+早期托管平台用 `?sharecode=XXX` 当访问凭证，响应种 30 天 cookie，无凭证访问一律 403。
+那时 `start_url` 必须写成 `"./?sharecode=..."`，否则 cookie 到期后用户点桌面图标就是一片白屏。
 
-manifest 原本写 `start_url: "./"`，从桌面图标启动访问的是 `/`（无凭证）→ **cookie 到期那天开始，用户点图标就是一片 403 白屏，完全不知道为什么**。
-现在 `start_url: "./?sharecode=KW332RH4SO"`，每次启动重新种 30 天 cookie。
-双保险：`handleNavigate` 里 `response.ok` 为假时也回退 shell 缓存（早期只在 `catch` 里回退，403 会直接甩给用户）。
-
-**如果换了部署地址 / 换了 app，这个 sharecode 必须同步更新**，否则桌面图标启动白屏。
+2026-10-23 换到新托管后**不再有访问凭证**，`start_url` 已恢复成 `"./"`。
+`handleNavigate` 里「非 2xx 回退 shell 缓存」的双保险继续保留，仍然有用。
 
 ---
 
@@ -478,17 +475,28 @@ WebView 壳不依赖任何域名验证。代价：引擎性能略低于 Chrome�
 | 站外链接 | 会顶掉 App | `shouldOverrideUrlLoading` 判 host，非本站交给系统浏览器 |
 | 原相机画质 | `getUserMedia` 走视频流通道，竖屏裁切后只剩几百像素宽 | JS 桥接 `PhotoCoachNative.openSystemCamera()` → `ACTION_IMAGE_CAPTURE` + `MediaStore` 预占 uri |
 
-**关于第 4 条（`openSystemCamera`）的取舍**：它**会离开指导界面**，所以只作为「照片不够清晰」时的
-补充入口，放在拍照预览层里（按钮文案「照片不够清晰？用系统相机拍一张」），不是主快门。
+**关于第 4 条（`openSystemCamera`）：快门直连，不是补充入口。**
 
-不做 App 内 Camera2 的原因：Camera2 与 WebView 的 `getUserMedia` 互斥，要拍就得先停流、等系统释放、
-再开相机，中间黑屏 1~2 秒，还得自己处理旋转、输出尺寸、各厂商差异 —— 系统相机 App 把这些全做好了，
-画质就是设备上限。跳过去的时机也合理：用户此时姿势已经摆好，按快门就行。
+2026-10-23 用户真机反馈「拍出来还是模糊，要原相机、要防抖」之后改成：
+**壳内按快门 = 直接跳系统相机**，不再走网页抓帧。理由：
 
-流程上有两个必须记住的点：
-- **跳转前必须先把摄像头放掉**（`ui.ts` 里先 `onSystemCameraRequest()` → `suspendCamera()`，再调桥接），
+- WebView 的 `getUserMedia` 走视频流通道，分辨率受 WebRTC 采集能力限制；
+- 竖屏 `cover` 裁切后照片宽度只有采集高度的 0.46 倍（1080p 采集 → 499×1080）；
+- 拿不到相机硬件的 OIS 防抖。
+
+系统相机是硬件级拍照通道，画质 / 防抖 / 多帧合成都是设备上限。代价是离开指导界面 ——
+但此时用户已照着剪影摆好姿势，跳过去直接按快门即可。浏览器里（无桥接）仍走抓帧 + 预览。
+
+不做 App 内 Camera2 的原因：与 `getUserMedia` 互斥，要停流、等系统释放、再开相机，
+中间黑屏 1~2 秒，还得自己处理旋转、输出尺寸、各厂商差异，且无法本地验证。
+
+流程上三个必须记住的点：
+- **跳转前必须先把摄像头放掉**（`main.ts` 的 `takePhoto()` 里先 `suspendCamera()` 再调桥接），
   否则系统相机会黑屏或打不开。原生侧还额外 `postDelayed 180ms`，等系统真正释放。
-- **回来不用额外处理**：从系统相机返回必然走 `onResume`，那里已经派发 `photocoach:resume`，网页端自动重新取流。
+- **回来不用额外处理**：从系统相机返回必然走 `onResume`，那里派发 `photocoach:resume`，网页自动重新取流。
+- **跳转失败必须有兜底**：没相机 App / 权限不足 / 存储异常时不会走 `onResume`，
+  原生 `notifyCameraFailed()` 派发 `photocoach:camera-failed`，网页先恢复取景、1.2 秒后回退 WebRTC 抓帧。
+  漏了这条，用户按一下快门就卡在黑屏上，只能杀进程。
 
 ### 14.3 保存为什么不能走 `setDownloadListener`
 
@@ -543,4 +551,35 @@ WebView 壳不依赖任何域名验证。代价：引擎性能略低于 Chrome�
 `app/build.gradle.kts` 的 `dependencies {}` 是空的：不用 androidx / appcompat / kotlin。
 好处是 CI 只需 AGP 一个插件，构建失败面最小。代价是不能用 ViewBinding，但总共就一个
 Activity + 一个 WebView，手写足够。**加依赖前先想清楚值不值。**
+
+### 14.8 ⚠️ 发布域名每次都会变（当前最大隐患）
+
+**现象**（2026-10-23 实测，连续部署三次）：
+
+| 部署 | 链接 | 下一次部署后 |
+| --- | --- | --- |
+| 第 1 次 | `8dec044d…sg.agentos-app.run` | **400** |
+| 第 2 次 | `242ff01c…sg.agentos-app.run` | **400** |
+| 第 3 次 | `2e6d7367…sg.agentos-app.run` | 当前有效 |
+
+`sandboxId` 三次都是同一个，但 `shareLink` 每次都是新的，旧域名立刻 400。
+`domainPrefix` 参数不起作用（域名是随机 hash，不是 `photo-coach`）。
+
+**后果**：`APP_URL` 写死在 APK 里，所以**每部署一次网页，就必须重新出包 + 用户重装 APK**。
+「改网页不用重新出包」这个 WebView 壳原本的核心优势，在当前托管平台上不成立。
+
+**短期做法**（每次发布都要走一遍）：
+
+1. 部署 `dist/` → 拿到新链接
+2. 同步改三处：`android/app/build.gradle.kts` 的 `APP_URL`、
+   `MainActivity.java` 的 `APP_HOST`、`public/manifest.webmanifest`（现在只需 `./`）
+3. `versionCode` +1、`versionName` 升一位
+4. push → CI → 下载 APK → 用户重装
+
+**长期方案（待做）**：把 `dist/` 打进 APK 的 `assets/web/`，用
+`shouldInterceptRequest` 把 `https://appassets.androidplatform.net/web/...` 映射到 assets。
+好处是彻底摆脱域名依赖、离线天然可用、启动不用下载 18MB；代价是网页更新必须重新出包。
+但既然域名本来就不稳定，「网页独立更新」早已是幻觉，这个代价其实没增加。
+注意：assets 走 `file://` 会失去安全上下文、`getUserMedia` 直接不可用，
+必须用 `https://` 的自定义域名映射，不能图省事用 `file:///android_asset/`。
 

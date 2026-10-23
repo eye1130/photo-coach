@@ -5,7 +5,7 @@
   "description": "打开摄像头，实时告诉你站在哪里、怎么摆姿势、手往哪放。",
   "lang": "zh-CN",
   "dir": "ltr",
-  "start_url": "./?sharecode=KW332RH4SO",
+  "start_url": "./",
   "scope": "./",
   "display": "standalone",
   "display_override": ["standalone", "minimal-ui"],

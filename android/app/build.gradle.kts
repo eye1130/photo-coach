@@ -10,17 +10,22 @@ android {
         applicationId = "cn.photocoach.app"
         minSdk = 24
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.1.0"
 
-        // 线上地址写死在这里（含 sharecode）。改地址时三处要同步：
+        // 线上地址写死在这里。改地址时三处要同步：
         //   1. 本文件 APP_URL
         //   2. public/manifest.webmanifest 的 start_url
-        //   3. AGENTS.md §9.3
+        //   3. MainActivity.java 的 APP_HOST（只填 host，不含协议和路径）
+        //
+        // ⚠️ 2026-10-23 实测：发布平台**每次部署都会换一个新域名**，旧域名立刻 400。
+        // 所以这个字段的有效期只到下一次部署为止 —— 重新发布后必须同步改这里、
+        // 重新出包、用户重装。长期方案是把网页打进 APK 的 assets（见 AGENTS.md §14.8），
+        // 彻底摆脱域名依赖。
         buildConfigField(
             "String",
             "APP_URL",
-            "\"https://photo-coach-01631.app.workbuddy.host/?sharecode=KW332RH4SO\""
+            "\"https://2e6d73676aed42759e5e88229b9d0269.sg.agentos-app.run\""
         )
     }
 
