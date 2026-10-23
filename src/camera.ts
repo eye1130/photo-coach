@@ -25,6 +25,24 @@ const SEND_TIMEOUT_MS = 2000;
 const FATAL_SEND_ERRORS = 3;
 
 /**
+ * 送进模型的输入最大宽度。
+ *
+ * MediaPipe lite 内部会把输入缩到 256×256，直接喂 4K 视频流等于每帧白传一张
+ * 800 万像素的纹理，帧率会被拖垮。降到 640 宽后推理结果完全不变 ——
+ * 输出的关键点是**归一化坐标**，与输入尺寸无关。
+ */
+const INFER_MAX_WIDTH = 640;
+
+/** `ImageCapture.takePhoto()` 的超时。部分机型会挂住不返回，必须兜底。 */
+const STILL_PHOTO_TIMEOUT_MS = 2500;
+
+/** 实际采集分辨率（拍照清晰度的物理上限就取决于它）。 */
+export interface CaptureResolution {
+  width: number;
+  height: number;
+}
+
+/**
  * 生成一张 64×64 空白画布，用于 initialize() 失败后的一次功能性验证 send：
  * legacy Pose 的 initialize() 有时会误 reject，但真正的 send 仍可用，
  * 只有 send 也失败才能断定模型不可用。
@@ -72,6 +90,12 @@ export class CameraController {
   private sendToken = 0;
   private sendWatchdog = 0;
   private consecutiveSendErrors = 0;
+  /** 推理降采样用的离屏画布（只在采集分辨率超过 INFER_MAX_WIDTH 时才用）。 */
+  private readonly inferCanvas: HTMLCanvasElement;
+  private readonly inferCtx: CanvasRenderingContext2D | null;
+  /** 当前实际采集分辨率，0 表示还没拿到流。 */
+  private captureWidth = 0;
+  private captureHeight = 0;
 
   /** 最新一帧平滑后的关键点（未检测到人时为 null）。 */
   landmarks: Landmark[] | null = null;
@@ -88,6 +112,14 @@ export class CameraController {
 
   constructor(video: HTMLVideoElement) {
     this.video = video;
+    this.inferCanvas = document.createElement('canvas');
+    // alpha: false —— 输入永远是摄像头画面，不需要透明通道，关掉省一次合成
+    this.inferCtx = this.inferCanvas.getContext('2d', { alpha: false });
+  }
+
+  /** 当前实际采集分辨率。拍照清晰度的上限就是这个值。 */
+  get resolution(): CaptureResolution {
+    return { width: this.captureWidth, height: this.captureHeight };
   }
 
   /** 摄像头流是否已打开。 */
@@ -139,7 +171,16 @@ export class CameraController {
     if (this.onModelReady) this.onModelReady();
   }
 
-  /** 请求摄像头并挂载到 video 元素。 */
+  /**
+   * 请求摄像头并挂载到 video 元素。
+   *
+   * 分辨率策略：**优先把采集高度顶到设备上限**。
+   *
+   * 画面用 `object-fit: cover` 铺满竖屏容器，拍照时又按容器宽高比裁切，
+   * 竖屏（约 0.46 宽高比）下裁出来的宽度 ≈ 采集高度 × 0.46 ——
+   * 1080p 的流裁完只剩 499px 宽，这就是「拍出来糊」的直接原因。
+   * 所以 `ideal` 从 2160 高度起步，拿到流后再用 `applyConstraints` 顶到设备真实上限。
+   */
   async openCamera(): Promise<void> {
     if (typeof navigator.mediaDevices?.getUserMedia !== 'function') {
       throw new Error('当前浏览器不支持摄像头（需 HTTPS 或 localhost 安全上下文）');
@@ -148,8 +189,8 @@ export class CameraController {
     const preferred: MediaStreamConstraints = {
       video: {
         facingMode: { ideal: 'environment' },
-        width: { ideal: 1920 },
-        height: { ideal: 1080 },
+        width: { ideal: 3840 },
+        height: { ideal: 2160 },
       },
       audio: false,
     };
@@ -157,8 +198,16 @@ export class CameraController {
     try {
       this.stream = await navigator.mediaDevices.getUserMedia(preferred);
     } catch (error) {
-      console.warn('[camera] 后置摄像头不可用，回退到默认摄像头', error);
-      this.stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      console.warn('[camera] 高分辨率请求被拒，回退到后置摄像头默认约束', error);
+      try {
+        this.stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: 'environment' } },
+          audio: false,
+        });
+      } catch (fallbackError) {
+        console.warn('[camera] 后置摄像头不可用，回退到默认摄像头', fallbackError);
+        this.stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      }
     }
 
     this.video.srcObject = this.stream;
@@ -170,6 +219,79 @@ export class CameraController {
       console.warn('[camera] video.play() 被拒绝，等待用户手势', error);
     }
     await this.waitForFrameReady();
+    await this.upgradeResolution();
+  }
+
+  /**
+   * 把采集分辨率顶到设备上限。
+   *
+   * `getUserMedia` 的 `ideal` 只是「尽力而为」，Chrome / WebView 经常先给
+   * 640×480 或 1280×720。真正能开到多大只有 `track.getCapabilities()` 知道，
+   * 所以拿到流之后再 `applyConstraints` 试一次。
+   *
+   * 顶不上去不算错误：设备不支持就保持原样，只是照片没那么清晰。
+   */
+  private async upgradeResolution(): Promise<void> {
+    const track = this.stream?.getVideoTracks()[0];
+    if (!track) return;
+
+    const current = track.getSettings();
+    this.captureWidth = current.width ?? 0;
+    this.captureHeight = current.height ?? 0;
+
+    let targetWidth = this.captureWidth;
+    let targetHeight = this.captureHeight;
+    try {
+      const caps = track.getCapabilities?.();
+      if (caps?.width?.max) targetWidth = caps.width.max;
+      if (caps?.height?.max) targetHeight = caps.height.max;
+    } catch (error) {
+      console.warn('[camera] 读取摄像头能力失败，保持当前分辨率', error);
+    }
+
+    // 已经到上限、或拿不到能力信息：不要白跑一次 applyConstraints（画面会闪一下）
+    if (targetWidth <= this.captureWidth && targetHeight <= this.captureHeight) return;
+
+    try {
+      await track.applyConstraints({
+        width: { ideal: targetWidth },
+        height: { ideal: targetHeight },
+      });
+    } catch (error) {
+      console.warn('[camera] 提升采集分辨率失败，保持当前分辨率', error);
+    }
+
+    const finalSettings = track.getSettings();
+    this.captureWidth = finalSettings.width ?? this.captureWidth;
+    this.captureHeight = finalSettings.height ?? this.captureHeight;
+    console.info(
+      `[camera] 采集分辨率 ${current.width}×${current.height} → ${this.captureWidth}×${this.captureHeight}`,
+    );
+  }
+
+  /**
+   * 推理输入：超过 640 宽就先降采样。
+   *
+   * 采集分辨率提上去之后必须走这条路，否则每帧上传一张 4K 纹理给 wasm，
+   * 推理帧率会从 20fps 掉到个位数，指导体验反而变差。
+   * 输出是归一化坐标，降采样不会影响关键点精度。
+   */
+  private inferenceInput(): HTMLCanvasElement | HTMLVideoElement {
+    const video = this.video;
+    const width = video.videoWidth;
+    const height = video.videoHeight;
+    const ctx = this.inferCtx;
+    if (!ctx || width <= INFER_MAX_WIDTH || height <= 0) return video;
+
+    const scale = INFER_MAX_WIDTH / width;
+    const targetW = Math.max(1, Math.round(width * scale));
+    const targetH = Math.max(1, Math.round(height * scale));
+    if (this.inferCanvas.width !== targetW || this.inferCanvas.height !== targetH) {
+      this.inferCanvas.width = targetW;
+      this.inferCanvas.height = targetH;
+    }
+    ctx.drawImage(video, 0, 0, targetW, targetH);
+    return this.inferCanvas;
   }
 
   private async waitForFrameReady(timeoutMs = 6000): Promise<void> {
@@ -301,8 +423,15 @@ export class CameraController {
   }
 
   /**
-   * 拍照：把当前 video 帧按「用户在屏幕上看到的构图」裁切后画到离屏 canvas。
+   * 拍照：按「用户在屏幕上看到的构图」裁切后编码成 JPEG。
    * 只保存原始画面，不含任何叠加层。
+   *
+   * 两条取图路径：
+   * 1. `ImageCapture.takePhoto()` —— 走摄像头的**静态拍照通道**，分辨率通常高于
+   *    视频流，部分机型还会带上多帧合成 / 降噪。这是 WebView 里能拿到的最高画质。
+   * 2. 回退：直接从 video 抓当前帧。
+   *
+   * takePhoto 在 Chrome/WebView 上支持度参差，任何异常都静默回退，不影响正常拍照。
    */
   async capture(): Promise<Blob> {
     const video = this.video;
@@ -312,8 +441,110 @@ export class CameraController {
       throw new Error('画面尚未就绪');
     }
 
-    const rect = video.getBoundingClientRect();
-    const targetAspect = rect.width > 0 && rect.height > 0 ? rect.width / rect.height : sourceWidth / sourceHeight;
+    const still = await this.takeStillPhoto();
+    try {
+      if (still) {
+        return await this.cropAndEncode(still, still.width, still.height);
+      }
+      return await this.cropAndEncode(video, sourceWidth, sourceHeight);
+    } finally {
+      still?.close();
+      // takePhoto 会短暂停掉视频流，正常情况几百毫秒内自己恢复。
+      // 万一没恢复（部分机型），取景画面会一直黑着 —— 这里兜一手。
+      window.setTimeout(() => this.recoverIfStalled(), 900);
+    }
+  }
+
+  /**
+   * 取景画面停了就重新取流。
+   *
+   * 只有 `takeStillPhoto()` 走过静态拍照通道才可能触发：`ImageCapture.takePhoto()`
+   * 在部分 ROM 上会 stop 掉 video track 却不再 restart，表现为「拍完一张，之后一直黑屏」。
+   */
+  private recoverIfStalled(): void {
+    if (!this.running) return;
+    if (this.video.readyState >= 2 && this.video.videoWidth > 0) return;
+    console.warn('[camera] 拍照后取景画面未恢复，重新取流');
+    void this.openCamera()
+      .then(() => this.start())
+      .catch((error: unknown) => {
+        console.warn('[camera] 重新取流失败', error);
+      });
+  }
+
+  /**
+   * 尝试用 `ImageCapture.takePhoto()` 拍一张静态照片。
+   *
+   * 为什么值得试：视频流是「为了流畅牺牲画质」的通道（可能只有 720p），
+   * 而静态拍照通道能拿到传感器更高分辨率。实测差异可以到 4~8 倍像素。
+   *
+   * 三道保险，任何一道不过就返回 null 走回退：
+   * - 接口不存在 / 抛错
+   * - 2.5 秒不返回（部分机型会挂住）
+   * - 拿到的照片方向或像素数不优于视频帧（说明没实际收益）
+   */
+  private async takeStillPhoto(): Promise<ImageBitmap | null> {
+    const track = this.stream?.getVideoTracks()[0];
+    if (!track) return null;
+
+    // 视频流本身已经很高（≥ 2000 高，典型 4K/4:3 全分辨率）时直接跳过：
+    // takePhoto 要重配摄像头 + 解码一张全尺寸大图，实测多花 1.4 秒，
+    // 而像素数不会有任何提升 —— 白等。
+    if (this.captureHeight >= 2000) return null;
+
+    const ImageCaptureCtor = (
+      window as unknown as {
+        ImageCapture?: new (track: MediaStreamTrack) => { takePhoto: () => Promise<Blob> };
+      }
+    ).ImageCapture;
+    if (typeof ImageCaptureCtor !== 'function') return null;
+
+    // 拍照期间停掉帧循环：takePhoto 会短暂占用摄像头，同时跑推理容易互相干扰
+    const wasRunning = this.running;
+    this.pause();
+    try {
+      const capture = new ImageCaptureCtor(track);
+      const blob = await Promise.race<Blob | null>([
+        capture.takePhoto(),
+        new Promise<null>((resolve) => {
+          window.setTimeout(() => resolve(null), STILL_PHOTO_TIMEOUT_MS);
+        }),
+      ]);
+      if (!blob) return null;
+
+      const bitmap = await createImageBitmap(blob);
+      const video = this.video;
+      const videoLandscape = video.videoWidth >= video.videoHeight;
+      const stillLandscape = bitmap.width >= bitmap.height;
+      // 方向校验：部分机型返回的是传感器原始方向（横躺），和取景画面不一致，
+      // 直接用会导致照片转了 90°，宁可不占这个便宜。
+      if (videoLandscape !== stillLandscape) {
+        bitmap.close();
+        return null;
+      }
+      // 像素数没有提升就没必要用，省一次多余的解码
+      if (bitmap.width * bitmap.height <= video.videoWidth * video.videoHeight) {
+        bitmap.close();
+        return null;
+      }
+      return bitmap;
+    } catch (error) {
+      console.warn('[capture] 静态拍照不可用，回退到视频帧', error);
+      return null;
+    } finally {
+      if (wasRunning) this.start();
+    }
+  }
+
+  /** 按取景容器宽高比裁切并编码为 JPEG。 */
+  private async cropAndEncode(
+    source: CanvasImageSource,
+    sourceWidth: number,
+    sourceHeight: number,
+  ): Promise<Blob> {
+    const rect = this.video.getBoundingClientRect();
+    const targetAspect =
+      rect.width > 0 && rect.height > 0 ? rect.width / rect.height : sourceWidth / sourceHeight;
     const sourceAspect = sourceWidth / sourceHeight;
 
     let cropWidth = sourceWidth;
@@ -333,7 +564,7 @@ export class CameraController {
     canvas.height = cropHeight;
     const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error('无法创建拍照画布');
-    ctx.drawImage(video, cropX, cropY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
+    ctx.drawImage(source, cropX, cropY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
 
     return await new Promise<Blob>((resolve, reject) => {
       canvas.toBlob(
@@ -342,7 +573,8 @@ export class CameraController {
           else reject(new Error('照片编码失败'));
         },
         'image/jpeg',
-        0.92,
+        // 0.95：照片是唯一交付物，多几百 KB 换肉眼可见的清晰度值得
+        0.95,
       );
     });
   }
@@ -427,7 +659,7 @@ export class CameraController {
       this.sendWatchdog = watchdog;
 
       pose
-        .send({ image: video })
+        .send({ image: this.inferenceInput() })
         .then(() => {
           this.consecutiveSendErrors = 0;
           release();

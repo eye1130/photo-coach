@@ -20,6 +20,16 @@ import { drawFigure, figureBounds } from './figure';
  */
 interface NativeBridge {
   saveImage(dataUrl: string, fileName: string): void;
+  /**
+   * 调起系统相机拍一张全分辨率照片（可选能力）。
+   *
+   * 为什么需要：WebView 的 `getUserMedia` 走的是「视频流」通道，分辨率受
+   * WebRTC 采集能力限制（常见 720p/1080p），竖屏裁切后只剩几百像素宽。
+   * 想拿到真正的原相机画质，只能交给系统相机 App 去拍。
+   *
+   * 做成可选：老版本 APK 里没有这个方法，网页端要能优雅降级。
+   */
+  openSystemCamera?(): void;
 }
 
 /** 取原生桥接；浏览器环境返回 null，调用方据此保留默认下载行为。 */
@@ -45,6 +55,14 @@ export interface UiCallbacks {
   onToggleChange: (key: ToggleKey, value: boolean) => void;
   onShutter: () => void;
   onPreviewClose: () => void;
+  /**
+   * 用户点了「用系统相机拍」。
+   *
+   * 必须**先**把摄像头放掉再跳转：系统相机也要打开同一个摄像头，
+   * WebView 还占着的话它会黑屏或直接失败。恢复由原生回传的
+   * `photocoach:resume` 事件负责（见 main.ts）。
+   */
+  onSystemCameraRequest: () => void;
 }
 
 /**
@@ -104,8 +122,15 @@ export class Ui {
   private readonly shutter: HTMLButtonElement;
   private readonly preview: HTMLElement;
   private readonly previewImg: HTMLImageElement;
+  /**
+   * 照片尺寸标注。**故意做成可选**：它是纯展示节点，一旦 HTML 与 JS 版本错位
+   * （Service Worker 缓存了旧 index.html），`requireElement` 抛错会让整个 Ui
+   * 构造失败 → 整页白屏。为一个标注付这个代价不值得。
+   */
+  private readonly previewMeta: HTMLElement | null;
   private readonly saveButton: HTMLAnchorElement;
   private readonly closeButton: HTMLButtonElement;
+  private readonly systemCameraButton: HTMLButtonElement | null;
   private readonly toastElement: HTMLElement;
   private readonly toggleButtons: HTMLButtonElement[];
   private readonly toggleState: Record<ToggleKey, boolean>;
@@ -138,8 +163,10 @@ export class Ui {
     this.shutter = this.requireElement<HTMLButtonElement>('shutter');
     this.preview = this.requireElement('preview');
     this.previewImg = this.requireElement<HTMLImageElement>('preview-img');
+    this.previewMeta = document.getElementById('preview-meta');
     this.saveButton = this.requireElement<HTMLAnchorElement>('btn-save');
     this.closeButton = this.requireElement<HTMLButtonElement>('btn-close');
+    this.systemCameraButton = document.getElementById('btn-system-camera') as HTMLButtonElement | null;
     this.toastElement = this.requireElement('toast');
     this.toggleButtons = Array.from(document.querySelectorAll<HTMLButtonElement>('[data-toggle]'));
 
@@ -211,13 +238,35 @@ export class Ui {
     this.saveButton.href = this.previewUrl;
     this.saveButton.download = `拍照指导-${timestampForFileName(new Date())}.jpg`;
     this.preview.hidden = false;
+    this.renderPreviewMeta();
   }
 
   hidePreview(): void {
     this.preview.hidden = true;
     this.previewImg.removeAttribute('src');
+    if (this.previewMeta) this.previewMeta.textContent = '';
     this.previewBlob = null;
     this.revokePreviewUrl();
+  }
+
+  /**
+   * 显示照片的实际像素尺寸。
+   *
+   * 这不是装饰：照片「糊」的时候，用户看到 499×1080 才能判断是采集分辨率不够，
+   * 而不是对焦 / 手抖 / 保存压缩的问题。尺寸只能等图片解码完才知道，
+   * 所以挂在 onload 上读 naturalWidth。
+   */
+  private renderPreviewMeta(): void {
+    const meta = this.previewMeta;
+    if (!meta) return;
+    meta.textContent = '';
+    this.previewImg.onload = () => {
+      const width = this.previewImg.naturalWidth;
+      const height = this.previewImg.naturalHeight;
+      if (!width || !height) return;
+      const megapixels = (width * height) / 1_000_000;
+      meta.textContent = `${width} × ${height} · ${megapixels.toFixed(1)} MP`;
+    };
   }
 
   /**
@@ -367,6 +416,25 @@ export class Ui {
       this.hidePreview();
       this.callbacks.onPreviewClose();
     });
+
+    // 「用系统相机拍」只在壳里有意义：浏览器里点它会跳到相机 App 再回来，
+    // 照片还落在相册里，用户根本不知道发生了什么。
+    const bridge = nativeBridge();
+    const systemCamera = this.systemCameraButton;
+    if (systemCamera) {
+      if (bridge && typeof bridge.openSystemCamera === 'function') {
+        systemCamera.hidden = false;
+        systemCamera.addEventListener('click', () => {
+          // 顺序不能反：先把摄像头让出来，系统相机才打得开
+          this.hidePreview();
+          this.callbacks.onPreviewClose();
+          this.callbacks.onSystemCameraRequest();
+          bridge.openSystemCamera?.();
+        });
+      } else {
+        systemCamera.hidden = true;
+      }
+    }
 
     // 「保存到相册」：浏览器里交给 <a download> 的默认下载；Android 壳里
     // WebView 不支持 download，必须拦下来走原生桥接，否则点了没反应。

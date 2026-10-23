@@ -29,4 +29,5 @@ android/captures/
 # ---------------------------------------------------------------- 工具本地状态
 # 与本项目源码无关，属于 IDE / Agent 的本地状态文件
 .workbuddy/
+.workbuddy-ai/
 .wbapp_*.genie

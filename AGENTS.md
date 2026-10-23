@@ -403,6 +403,13 @@ manifest 原本写 `start_url: "./"`，从桌面图标启动访问的是 `/`（�
 10. **`start_url` 不带 sharecode**，桌面图标 30 天后白屏。见 §9.3。
 11. **`handleAsset` 只查 `ASSET_CACHE`**，预缓存进 `SHELL_CACHE` 的剪影和 `pose.js` 全部 miss → 断网时「页面起来了、一张剪影都没有」。必须 `(await cache.match(req)) || (await caches.match(req))`。
 12. **`index.html` 里的 `pose.js` 在解析期加载**，早于 SW 就绪，靠运行时缓存永远拿不到，必须放进预缓存，且引用写成 `./mp/pose.js` 与 SW 缓存 key 对齐。
+13. **「拍出来糊」的根因是竖屏裁切，不是对焦**。画面 `object-fit: cover` 铺满竖屏容器，拍照又按容器宽高比（约 0.46）裁切，所以
+    **照片宽度 ≈ 采集高度 × 0.46**。采集只有 720p 时裁完剩 331px 宽，看着就是糊的。真正的解法是把**采集高度**顶上去
+    （`getUserMedia` 的 `ideal` 只管「尽力」，拿到流后必须用 `track.getCapabilities()` + `applyConstraints` 再顶一次），
+    而不是调 JPEG 质量。判断依据看预览层的 `宽 × 高 · N MP` 标注。
+14. **采集分辨率提上去之后必须给推理降采样**。MediaPipe lite 内部只用 256×256，直接把 4K `video` 喂给 `pose.send()`
+    等于每帧传一张 800 万像素纹理，检测帧率会掉到个位数。`camera.ts` 的 `inferenceInput()` 会先缩到 640 宽再送，
+    输出是归一化坐标，精度不受影响。
 
 ---
 
@@ -415,6 +422,9 @@ manifest 原本写 `start_url: "./"`，从桌面图标启动访问的是 `/`（�
 - **水平仪**：`DeviceOrientationEvent` 的倾斜角含俯仰影响，抬头/低头取景时读数偏；iOS 需授权「运动与方向」。
 - **前置摄像头未做镜像**（默认后置）。
 - **拍照是相机原图按可见构图裁切**，不含叠加层；不同设备视场角可能与预览略有差异。
+- **照片分辨率受 WebRTC 采集能力限制**，不是相机传感器的上限。竖屏裁切后宽度 ≈ 采集高度 × 0.46，
+  1080p 采集只剩约 500px 宽。`camera.ts` 会尽量顶到设备上限、并尝试 `ImageCapture.takePhoto()` 拿静态照片，
+  但真正的原相机画质只能靠壳里的「用系统相机拍一张」入口（见 §14.2）。
 - **`side-glance` 的头发是实心块**（其余是轮廓线），AI 出图时画成了填充，提取后头顶一小片实心青色，可接受。
 
 ---
@@ -436,8 +446,10 @@ manifest 原本写 `start_url: "./"`，从桌面图标启动访问的是 `/`（�
 - [ ] `README.md` 有多处过时（剪影 9 个 → 实际 20 个、目录结构缺 PWA 文件、「5% 填充」的描述已不适用），需要按本文重写。
 - [ ] `.probe/` 下有一批阶段性脚本（`sil-*.mjs`、`cutout*.py`、`photosketch*.py`、`geom_line10.py`、`geom_fix.py` 等）已经不再使用，可以归档到 `.probe/archive/`。
 - [ ] `.probe/silhouette.ts.bak` 是改 `headTop` 前的备份，确认后可删。
-- [ ] 如果要出安卓 APK：走微软 PWABuilder（网页版，输入线上地址云端打包，本地不需要 JDK/Android SDK）。TWA 要去掉地址栏需要在站点根目录提供 `/.well-known/assetlinks.json`。
 - [ ] 如果要上架/换域名：注意 `manifest.webmanifest` 里的 `start_url` sharecode 要同步改。
+- [ ] 想彻底摆脱 WebView 的画质上限，只剩两条路：① App 内自写 Camera2 拍照（黑屏 1~2 秒，
+      要处理旋转/尺寸/厂商差异）；② 把指导层做成原生浮层盖在系统相机上（安卓系统级悬浮窗
+      拿不到系统相机画面，实际不成立）。目前的折中是「主快门走 WebRTC + 预览层提供系统相机入口」。
 
 ---
 
@@ -455,15 +467,28 @@ TWA 隐藏地址栏必须通过 Digital Asset Links 验证，验证文件得放�
 
 WebView 壳不依赖任何域名验证。代价：引擎性能略低于 Chrome。
 
-### 14.2 原生层必须补的三件事
+### 14.2 原生层必须补的四件事
 
-网页端做不到、只能原生补，**改壳时优先看这三条**：
+网页端做不到、只能原生补，**改壳时优先看这四条**：
 
 | 问题 | 网页端表现 | 原生补法 |
 | --- | --- | --- |
 | 摄像头权限 | `getUserMedia` 被拒 | `onPermissionRequest` 授权 `RESOURCE_VIDEO_CAPTURE`，**同时** App 要持有 `CAMERA` 运行时权限（缺一不可，只 grant 不申请系统权限仍然黑屏） |
 | 保存到相册 | `<a download>` 指向 `blob:`，**点了毫无反应** | JS 桥接 `PhotoCoachNative.saveImage(dataUrl, fileName)` → `MediaStore`（10+ 用 `IS_PENDING`） |
 | 站外链接 | 会顶掉 App | `shouldOverrideUrlLoading` 判 host，非本站交给系统浏览器 |
+| 原相机画质 | `getUserMedia` 走视频流通道，竖屏裁切后只剩几百像素宽 | JS 桥接 `PhotoCoachNative.openSystemCamera()` → `ACTION_IMAGE_CAPTURE` + `MediaStore` 预占 uri |
+
+**关于第 4 条（`openSystemCamera`）的取舍**：它**会离开指导界面**，所以只作为「照片不够清晰」时的
+补充入口，放在拍照预览层里（按钮文案「照片不够清晰？用系统相机拍一张」），不是主快门。
+
+不做 App 内 Camera2 的原因：Camera2 与 WebView 的 `getUserMedia` 互斥，要拍就得先停流、等系统释放、
+再开相机，中间黑屏 1~2 秒，还得自己处理旋转、输出尺寸、各厂商差异 —— 系统相机 App 把这些全做好了，
+画质就是设备上限。跳过去的时机也合理：用户此时姿势已经摆好，按快门就行。
+
+流程上有两个必须记住的点：
+- **跳转前必须先把摄像头放掉**（`ui.ts` 里先 `onSystemCameraRequest()` → `suspendCamera()`，再调桥接），
+  否则系统相机会黑屏或打不开。原生侧还额外 `postDelayed 180ms`，等系统真正释放。
+- **回来不用额外处理**：从系统相机返回必然走 `onResume`，那里已经派发 `photocoach:resume`，网页端自动重新取流。
 
 ### 14.3 保存为什么不能走 `setDownloadListener`
 
@@ -505,6 +530,13 @@ WebView 壳不依赖任何域名验证。代价：引擎性能略低于 Chrome�
 - **仓库不放 `gradle-wrapper.jar`**，CI 用 `gradle/actions/setup-gradle` 装 Gradle 8.7（配 AGP 8.5.2）。
 - **`NativeBridge` 必须是 public 类**。`@JavascriptInterface` 靠反射调用，非 public 的类
   在部分 ROM 上会抛 `IllegalAccessException`，症状是「对象在、方法调不到」，极难排查。
+- **桥接方法是「可选能力」的写法**。老版本 APK 里没有新方法，网页端必须能优雅降级：
+  `NativeBridge` 接口里把新方法声明成可选（`openSystemCamera?()`），调用处用
+  `typeof bridge.openSystemCamera === 'function'` 判一下，缺了就隐藏对应按钮。
+  否则新网页配旧 APK 会直接抛错。
+- **`launchSystemCamera` 不用 `resolveActivity` 预判**。Android 11 起的包可见性限制会让它对
+  未在 `<queries>` 声明的应用返回 null，明明有相机却判成「没有」。直接 `startActivityForResult`
+  再 catch 异常更可靠。
 
 ### 14.7 壳工程刻意零依赖
 

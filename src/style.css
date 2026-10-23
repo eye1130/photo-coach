@@ -456,6 +456,48 @@ body {
   box-shadow: 0 18px 48px rgba(0, 0, 0, 0.6);
 }
 
+/*
+ * 照片实际尺寸。看着不起眼，但它是判断「糊」的唯一依据 ——
+ * 用户看到 480×1066 就知道是采集分辨率没上去，而不是对焦问题。
+ */
+.preview-meta {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 0 16px 6px;
+  text-align: center;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.preview-meta:empty {
+  display: none;
+}
+
+/*
+ * 「用系统相机拍」的入口。只在 Android 壳里显示（浏览器里跳系统相机没有意义），
+ * 所以默认 hidden，由 ui.ts 检测到桥接对象后放开。
+ */
+.preview-link {
+  flex: 0 0 auto;
+  margin: 0 0 2px;
+  padding: 10px 16px;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.4;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.preview-link[hidden] {
+  display: none;
+}
+
 .preview-actions {
   flex: 0 0 auto;
   display: flex;

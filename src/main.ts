@@ -249,6 +249,11 @@ const ui = new Ui(POSE_TEMPLATES, state.toggles, {
   onPreviewClose: () => {
     // 关闭预览后恢复取景（video 一直在播放，无需额外处理）
   },
+  onSystemCameraRequest: () => {
+    // 系统相机要独占后置摄像头，先把我们的流放掉，否则它会黑屏或直接打不开。
+    // 回来后由原生派发 `photocoach:resume` 自动恢复（见下方事件监听）。
+    suspendCamera();
+  },
 });
 
 ui.setPhase('idle');

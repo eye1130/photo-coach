@@ -70,12 +70,16 @@ public class MainActivity extends Activity {
 
     private static final int REQUEST_CAMERA = 1001;
     private static final int REQUEST_STORAGE = 1002;
+    private static final int REQUEST_SYSTEM_CAMERA = 1003;
 
     private WebView webView;
     private View errorView;
 
     /** 网页发来、但因为 App 还没拿到系统权限而暂存的摄像头请求 */
     private PermissionRequest pendingWebPermission;
+
+    /** 系统相机的输出位置。拍照期间保留，回来时据此判断是成功还是取消。 */
+    private Uri pendingCameraUri;
 
     // ------------------------------------------------------------ 生命周期
 
@@ -357,6 +361,102 @@ public class MainActivity extends Activity {
         toast("没有相机权限，App 无法开启摄像头");
     }
 
+    // ------------------------------------------------------------ 系统相机
+
+    /**
+     * 调起系统相机拍一张全分辨率照片。
+     *
+     * **为什么不在 App 内自己写 Camera2**：WebView 的 getUserMedia 和 Camera2
+     * 互斥，要拍就得先停流、等系统释放、再开相机，中间黑屏 1~2 秒，还要自己处理
+     * 旋转、输出尺寸选择、各厂商的兼容差异。系统相机 App 把这些全做好了，
+     * 画质就是这台设备的上限（含 HDR / 多帧合成）。
+     *
+     * **代价**：会离开指导界面。所以它只作为「照片不够清晰」时的补充入口 ——
+     * 此时用户姿势已经摆好，跳过去直接按快门即可，不需要再看指导。
+     */
+    private void launchSystemCamera() {
+        Intent intent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
+        // 不用 resolveActivity 预判：Android 11 起的包可见性限制会让它对
+        // 未在 <queries> 里声明的应用返回 null，明明有相机却判成没有。
+        // 直接启动 + 捕获异常，结果更可靠。
+
+        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P
+                && !hasPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)) {
+            // Android 9 及以下，往 MediaStore 插记录需要写外部存储权限
+            requestPermissions(
+                    new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE}, REQUEST_STORAGE);
+            toast("请允许存储权限后再点一次");
+            return;
+        }
+
+        Uri output;
+        try {
+            output = createCameraOutputUri();
+        } catch (Exception error) {
+            Log.w(TAG, "创建拍照输出位置失败", error);
+            toast("无法准备拍照存储位置");
+            return;
+        }
+        if (output == null) {
+            toast("无法准备拍照存储位置");
+            return;
+        }
+
+        pendingCameraUri = output;
+        intent.putExtra(MediaStore.EXTRA_OUTPUT, output);
+        intent.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+        try {
+            startActivityForResult(intent, REQUEST_SYSTEM_CAMERA);
+        } catch (Exception error) {
+            Log.w(TAG, "启动系统相机失败", error);
+            pendingCameraUri = null;
+            deleteSilently(output);
+            toast("启动相机失败：" + error.getClass().getSimpleName());
+        }
+    }
+
+    /** 预先在 MediaStore 里占一个位置，系统相机直接往这个 uri 写。 */
+    private Uri createCameraOutputUri() {
+        ContentValues values = new ContentValues();
+        values.put(MediaStore.Images.Media.DISPLAY_NAME,
+                "拍照指导-" + System.currentTimeMillis() + ".jpg");
+        values.put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg");
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            values.put(MediaStore.Images.Media.RELATIVE_PATH,
+                    Environment.DIRECTORY_PICTURES + File.separator + GALLERY_FOLDER);
+        }
+        return getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != REQUEST_SYSTEM_CAMERA) return;
+
+        Uri output = pendingCameraUri;
+        pendingCameraUri = null;
+        if (output == null) return;
+
+        if (resultCode != RESULT_OK) {
+            // 用户取消：删掉预创建的空白记录，否则相册里会多一张 0 字节的坏图
+            deleteSilently(output);
+            return;
+        }
+
+        // 有些机型不会主动刷新相册，主动扫一下，用户切过去就能看到
+        sendBroadcast(new Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE, output));
+        toast("已保存到相册");
+        // 摄像头恢复不用管：从系统相机返回必然走 onResume，那里会派发 photocoach:resume
+    }
+
+    private void deleteSilently(Uri uri) {
+        try {
+            getContentResolver().delete(uri, null, null);
+        } catch (Exception ignored) {
+            // 删不掉就留着，比抛出去崩掉好
+        }
+    }
+
     // ------------------------------------------------------------ JS 桥接
 
     /**
@@ -410,6 +510,20 @@ public class MainActivity extends Activity {
                 Log.w(TAG, "保存照片失败", error);
                 toastOnUi("保存失败：" + error.getClass().getSimpleName());
             }
+        }
+
+        /**
+         * 用系统相机拍一张。与 ui.ts 里 `NativeBridge.openSystemCamera` 对应。
+         *
+         * 延迟 180ms 再启动：网页端在调用前已经 stop 了 getUserMedia 的轨道，
+         * 但系统真正释放摄像头还要几十毫秒，抢着启动的话部分机型会黑屏。
+         */
+        @JavascriptInterface
+        public void openSystemCamera() {
+            runOnUiThread(() -> {
+                if (webView == null) return;
+                webView.postDelayed(MainActivity.this::launchSystemCamera, 180);
+            });
         }
     }
 
