@@ -7,7 +7,15 @@ android {
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "cn.photocoach.app"
+        // 实验分支专用：改成独立包名，让验证版能和正式版**共存**。
+        //
+        // 原因：CI 每次构建用的 ~/.android/debug.keystore 是 runner 上临时生成的，
+        // 每次的签名指纹都不一样（实测 51d48957… 和 78e40185…），
+        // 所以同一个包名的两个 APK 无法覆盖安装，只能卸载重装。
+        // 改包名后两个 App 互不干扰，测完直接卸载验证版即可，正式版一直保留。
+        //
+        // ⚠️ 合并回 main 前必须改回 "cn.photocoach.app"。
+        applicationId = "cn.photocoach.app.probe"
         minSdk = 24
         targetSdk = 34
         versionCode = 3
