@@ -9,6 +9,13 @@
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />
 
+    <!-- ===== 以下三条只服务于 probe 包里的可行性验证入口 ===== -->
+    <!-- 悬浮窗：把指导层盖在系统相机上（能画，但读不到画面） -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <!-- 录屏：验证系统相机预览是否允许被捕获（Android 14 起必须声明前台服务类型权限） -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+
     <uses-feature
         android:name="android.hardware.camera.any"
         android:required="true" />
@@ -38,5 +45,31 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- ============================================================
+             可行性验证入口。与 MainActivity 完全独立：
+             单独的 launcher 图标、单独的 Activity 栈，不改任何现有行为。
+             验证完这条分支就可以整块删掉（连同 probe 包和上面三条权限）。
+             ============================================================ -->
+        <activity
+            android:name=".probe.OverlayProbeActivity"
+            android:exported="true"
+            android:label="原生叠加验证"
+            android:screenOrientation="portrait">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name=".probe.Camera2ProbeActivity"
+            android:exported="false"
+            android:screenOrientation="portrait" />
+
+        <service
+            android:name=".probe.ProbeOverlayService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection" />
     </application>
 </manifest>
