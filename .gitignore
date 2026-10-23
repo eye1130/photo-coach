@@ -32,3 +32,6 @@ android/captures/
 .workbuddy-ai/
 .wbapp_*.genie
 .wbapp_*.genie.bak
+
+__pycache__/
+*.pyc

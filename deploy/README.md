@@ -60,12 +60,19 @@ EulerOS 装 Node 经常踩版本坑。让 GitHub Actions 构建好、服务器�
 
 ### 第 3 件：把部署脚本跑一遍
 
-服务器是 Linux 的话，用华为云的 **CloudShell**（控制台右上角有个终端图标），
-不用装任何 SSH 工具，直接在网页里敲命令：
+服务器是 Linux 的话，用华为云控制台的**远程登录**（ECS → 实例 → 远程登录 →
+CloudShell 登录），不用装任何 SSH 工具，直接在浏览器里就有终端：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/eye1130/photo-coach/main/deploy/setup-server.sh -o /tmp/setup.sh
-DOMAIN=photo.galois1130.site bash /tmp/setup.sh
+curl -fsSL https://raw.githubusercontent.com/eye1130/photo-coach/main/deploy/setup-server.sh -o /tmp/setup.sh \
+  && DOMAIN=photo.galois1130.site bash /tmp/setup.sh
+```
+
+`raw.githubusercontent.com` 国内有时打不开。打不开就换 jsDelivr 镜像（内容一样）：
+
+```bash
+curl -fsSL https://cdn.jsdelivr.net/gh/eye1130/photo-coach@main/deploy/setup-server.sh -o /tmp/setup.sh \
+  && DOMAIN=photo.galois1130.site bash /tmp/setup.sh
 ```
 
 脚本会自动做完：装 nginx → 拉网页包 → 写配置 → 申请 Let's Encrypt 证书 → 配自动续期。
@@ -110,9 +117,39 @@ curl -fsSL https://raw.githubusercontent.com/eye1130/photo-coach/main/deploy/upd
 | --- | --- |
 | `setup-server.sh` | 首次部署：装环境 + 部署 + 签证书。可重复跑 |
 | `update.sh` | 只换网页文件，3~5 秒，不碰证书 |
+| `remote-deploy.py` | 从**本地**通过 SSH 完成上面两件事，不用登服务器敲命令 |
 | `nginx-http.conf.tpl` | 还没证书时的临时配置（签证书必须走 80） |
 | `nginx-ssl.conf.tpl` | 正式配置，含缓存策略和 gzip |
 | `../.github/workflows/web.yml` | 构建 dist 并发布到 `web-latest` Release |
+
+### 用 remote-deploy.py 远程部署
+
+适合不想在服务器上敲命令的情况。先跑 `probe` 模式只诊断、不改动：
+
+```powershell
+# PowerShell
+$env:SSH_HOST="你的服务器IP"; $env:SSH_PASSWORD="密码"; python deploy/remote-deploy.py
+```
+
+```bash
+# bash
+SSH_HOST=你的服务器IP SSH_PASSWORD=密码 python deploy/remote-deploy.py
+```
+
+诊断会检查系统版本、内存磁盘、nginx 是否已装、80/443 是否被占、SELinux、
+防火墙、DNS 是否解析到本机、能不能访问 GitHub。**这一步不会改服务器任何东西。**
+
+确认没问题后加 `STEP=deploy` 真正执行：
+
+```powershell
+$env:STEP="deploy"; python deploy/remote-deploy.py
+```
+
+脚本会做的事：上传部署文件 → 服务器连不上 GitHub 就用本地上传的网页包 →
+执行 `setup-server.sh` → 从服务器内部验证 HTTP/HTTPS 和证书有效期。
+
+> 密码只从环境变量读，不落盘、不写进任何文件、不打印。
+> 如果用了密码登录，部署完建议改一次密码。
 
 ---
 

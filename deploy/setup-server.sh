@@ -16,6 +16,8 @@
 #   EMAIL    Let's Encrypt 通知邮箱，可空
 #   SKIP_CERT=1  只部署文件、不签证书（证书已有或想手动签时用）
 #   FORCE=1      跳过 DNS 解析检查（确认解析还没生效但想先把服务架起来）
+#   LOCAL_BUNDLE=/root/dist.tar.gz
+#                用本地已上传的网页包，不去 GitHub 下载（服务器连不上 GitHub 时用）
 #
 # 幂等：可以反复跑。已装的包会跳过，已有证书不会重签。
 # =============================================================================
@@ -25,6 +27,7 @@ DOMAIN="${DOMAIN:-photo.galois1130.site}"
 EMAIL="${EMAIL:-}"
 SKIP_CERT="${SKIP_CERT:-0}"
 FORCE="${FORCE:-0}"
+LOCAL_BUNDLE="${LOCAL_BUNDLE:-}"
 
 WEBROOT="/var/www/photo-coach"
 ACME_ROOT="/var/www/acme"
@@ -179,10 +182,22 @@ fetch_bundle() {
 }
 
 BUNDLE=""
-for mirror in "${BUNDLE_MIRRORS[@]}"; do
-  if BUNDLE="$(fetch_bundle "$mirror")"; then break; fi
-  BUNDLE=""
-done
+# 优先用本地已上传的包：服务器连 GitHub 慢或不通时，走这条最稳
+if [ -n "$LOCAL_BUNDLE" ] && [ -f "$LOCAL_BUNDLE" ]; then
+  if tar -tzf "$LOCAL_BUNDLE" >/dev/null 2>&1; then
+    BUNDLE="$LOCAL_BUNDLE"
+    c_ok "使用本地网页包 ${LOCAL_BUNDLE}"
+  else
+    c_warn "LOCAL_BUNDLE=${LOCAL_BUNDLE} 不是有效的 tar.gz，改为从 GitHub 下载"
+  fi
+fi
+
+if [ -z "$BUNDLE" ]; then
+  for mirror in "${BUNDLE_MIRRORS[@]}"; do
+    if BUNDLE="$(fetch_bundle "$mirror")"; then break; fi
+    BUNDLE=""
+  done
+fi
 
 if [ -z "$BUNDLE" ]; then
   if [ -f "$WEBROOT/index.html" ]; then
@@ -202,7 +217,8 @@ else
   if [ -d "$WEBROOT" ]; then mv "$WEBROOT" "${WEBROOT}.old"; fi
   mv "${WEBROOT}.new" "$WEBROOT"
   rm -rf "${WEBROOT}.old"
-  rm -f "$BUNDLE"
+  # 下载到 /tmp 的临时包用完就删；本地传上来的包留着，方便重跑
+  if [ "$BUNDLE" != "$LOCAL_BUNDLE" ]; then rm -f "$BUNDLE"; fi
   c_ok "网页已就位（$(du -sh "$WEBROOT" | cut -f1)，$(find "$WEBROOT" -type f | wc -l) 个文件）"
 fi
 
