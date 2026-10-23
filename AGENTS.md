@@ -353,16 +353,31 @@ Fashion illustration croquis style, very minimal detail. Pose: {POSE}
 | 环节 | 做法 |
 | --- | --- |
 | 网页包 | `.github/workflows/web.yml` push 后自动构建，发到固定 Release `web-latest` |
-| 服务器 | 华为云 ECS + nginx，静态目录 `/var/www/photo-coach` |
+| 服务器 | 华为云 Flexus L + nginx，静态目录 `/var/www/photo-coach` |
 | 更新 | 服务器上 `bash deploy/update.sh`，3~5 秒，不动 APK |
-| 证书 | acme.sh + Let's Encrypt，自动续期 |
+| 证书 | acme.sh + Let's Encrypt（免费，90 天），自动续期 |
 | 配置 | `deploy/nginx-ssl.conf.tpl`，缓存策略的每条原因写在注释里 |
 
-**为什么服务器不自己构建**：要在服务器装 Node，华为云 EulerOS 版本兼容坑多。
+**这台机器的实际情况**（2026-10-23 实测，和文档默认假设差很远）：
+
+| 项目 | 实际值 | 影响 |
+| --- | --- | --- |
+| 产品 | **Flexus 应用服务器 L 实例**，不是 ECS | 防火墙入口不在 ECS 里，按 ECS 路径找不到 |
+| 系统 | Ubuntu 24.04.4 LTS，nginx 1.24.0 | http2 必须写 `listen ssl http2` |
+| 镜像标称 | 「Linux 可视化_宝塔面板」 | 宝塔只跑面板（8888），**没装 nginx**，不冲突 |
+| 带宽 | **2Mbit/s 出方向**（实测 246 KB/s） | 首次加载模型 15~20 秒，之后走 SW 缓存 |
+| GitHub | **23 KB/s** | 必须走镜像，见下 |
+
+**镜像顺序不能反**：`gh-proxy.com` 561KB/s > `ghfast.top` 321KB/s > GitHub 原生 23KB/s。
+`BUNDLE_MIRRORS` 里如果把空字符串（原生）放第一位，会先卡 7 分钟才降级。
+
+**为什么服务器不自己构建**：要在服务器装 Node，版本兼容坑多。
 GitHub Actions 构建好、服务器只解压，少一层依赖就少一类故障。
 
-**为什么用子域名 `photo.` 而不是主域名**：主域名和 `www` 上还挂着两个旧服务，
-动主域名会带崩它们。子域名完全独立。
+**为什么用子域名 `photo.` 而不是主域名**：主域名没有 A 记录，`math`（EdgeOne Pages）
+和 `reservoir-api` 两个服务都挂在子域名上。加 `photo` 互不影响。
+**DNS 托管在腾讯云 DNSPod，不在华为云** —— 在华为云「添加域名」会要求改 NS，
+一改 `math` 立刻解析不到。
 
 **⚠️ 早期托管方案（已废弃）**：`workbuddy_sites_deploy` 每次部署都会换一条新链接，
 旧链接立刻 400（详见 §14.8）。只在应急时还能用，日常不要再用。

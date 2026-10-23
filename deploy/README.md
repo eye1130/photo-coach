@@ -7,13 +7,32 @@ APK 里的地址永远不用改，用户也不用重装。
 
 ---
 
+## 零、当前状态（2026-10-23 已上线）
+
+| 项目 | 值 |
+| --- | --- |
+| 访问地址 | **https://photo.galois1130.site** |
+| 证书 | Let's Encrypt，到期 2027-01-21，acme.sh 自动续期 |
+| 服务器 | 华为云 Flexus L（广州）113.45.2.149，Ubuntu 24.04.4 + nginx 1.24.0 |
+| 网页目录 | `/var/www/photo-coach`（19MB / 39 文件） |
+| 站点配置 | `/etc/nginx/conf.d/photo-coach.conf` |
+| DNS | 腾讯云 DNSPod，`photo` A → `113.45.2.149` |
+| 出带宽 | **2Mbit/s**（实测 246 KB/s），首次加载模型约 15~20 秒 |
+
+验证结果：HTTPS 200、证书链系统信任通过、HTTP 强制跳转 301、gzip 把 5.8MB 的
+wasm 压到 1.84MB、`sw.js` 与 `index.html` 均为 `no-cache`。
+
+下面第二、三节是**首次部署的完整步骤**，留档备查。已经做过了，重装服务器时才需要再走一遍。
+
+---
+
 ## 一、整体结构
 
 ```
 你手机 / 浏览器
       │  https://photo.galois1130.site
       ▼
-华为云 ECS（nginx）
+华为云 Flexus L（nginx）
       │  静态文件：/var/www/photo-coach
       │
       └─ 更新时从 GitHub Release 拉 dist.tar.gz
@@ -21,13 +40,16 @@ APK 里的地址永远不用改，用户也不用重装。
          （这个地址固定不变，由 .github/workflows/web.yml 每次 push 自动更新）
 ```
 
-为什么不让服务器自己 `git clone` + 构建？因为要在服务器装 Node，华为云的
-EulerOS 装 Node 经常踩版本坑。让 GitHub Actions 构建好、服务器只负责解压，
-少一层依赖，也少一类故障。
+为什么不让服务器自己 `git clone` + 构建？因为要在服务器装 Node，版本兼容坑多。
+让 GitHub Actions 构建好、服务器只负责解压，少一层依赖，也少一类故障。
+
+**⚠️ 这台服务器必须走镜像**：实测 GitHub 原生只有 23 KB/s（9.8MB 要下 7 分钟），
+`gh-proxy.com` 有 561 KB/s。脚本里 `BUNDLE_MIRRORS` 已经把镜像排在前面，
+**不要把它改回 GitHub 优先**，否则每次部署先卡 7 分钟。
 
 ---
 
-## 二、你需要做的三件事
+## 二、首次部署的三件事
 
 ### 第 1 件：加一条 DNS 记录
 
