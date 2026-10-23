@@ -16,10 +16,11 @@ set -euo pipefail
 WEBROOT="/var/www/photo-coach"
 REPO="eye1130/photo-coach"
 BUNDLE_URL="https://github.com/${REPO}/releases/download/web-latest/dist.tar.gz"
-MIRRORS=("" "https://ghfast.top/" "https://gh-proxy.com/")
+# 实测：GitHub 原生 23KB/s，gh-proxy.com 561KB/s。镜像优先，原生兜底。
+MIRRORS=("https://gh-proxy.com/" "https://ghfast.top/" "")
 
-c_ok()   { printf '\033[32m✓\033[0m %s\n' "$*"; }
-c_info() { printf '\033[36m·\033[0m %s\n' "$*"; }
+c_ok()   { printf '\033[32m✓\033[0m %s\n' "$*" >&2; }
+c_info() { printf '\033[36m·\033[0m %s\n' "$*" >&2; }
 c_die()  { printf '\033[31m✗ %s\033[0m\n' "$*" >&2; exit 1; }
 
 [ "$(id -u)" -eq 0 ] || c_die "请用 root 运行"

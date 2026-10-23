@@ -35,22 +35,27 @@ SSL_DIR="/etc/nginx/ssl/${DOMAIN}"
 NGINX_CONF="/etc/nginx/conf.d/photo-coach.conf"
 REPO="eye1130/photo-coach"
 BUNDLE_URL="https://github.com/${REPO}/releases/download/web-latest/dist.tar.gz"
-# 国内直连 GitHub 偶尔抽风，失败时依次尝试加速镜像
+# 实测（2026-10-23，华为云广州这台）：GitHub 原生 23KB/s，ghfast.top 321KB/s，
+# gh-proxy.com 561KB/s。所以镜像优先、原生放最后兜底 —— 反过来会先卡 7 分钟。
 BUNDLE_MIRRORS=(
-  ""
-  "https://ghfast.top/"
   "https://gh-proxy.com/"
+  "https://ghfast.top/"
+  ""
 )
 
 # 脚本所在目录（用于读同目录下的 nginx 模板）
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ---------------------------------------------------------------- 输出
-c_ok()   { printf '\033[32m✓\033[0m %s\n' "$*"; }
-c_info() { printf '\033[36m·\033[0m %s\n' "$*"; }
-c_warn() { printf '\033[33m!\033[0m %s\n' "$*"; }
+# 提示类信息一律走 stderr。
+# 原因：fetch_bundle 是用 $(...) 取返回值的，函数里任何打到 stdout 的字
+# （包括颜色码和换行）都会被一起捕获进变量，路径就变成一坨乱码，
+# tar 会报 "Cannot open: No such file or directory"。这个坑很隐蔽。
+c_ok()   { printf '\033[32m✓\033[0m %s\n' "$*" >&2; }
+c_info() { printf '\033[36m·\033[0m %s\n' "$*" >&2; }
+c_warn() { printf '\033[33m!\033[0m %s\n' "$*" >&2; }
 c_die()  { printf '\033[31m✗ %s\033[0m\n' "$*" >&2; exit 1; }
-c_step() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
+c_step() { printf '\n\033[1m==> %s\033[0m\n' "$*" >&2; }
 
 # ---------------------------------------------------------------- 0. 前置检查
 c_step "前置检查"
@@ -269,6 +274,14 @@ if [ "$HAVE_CERT" = "1" ]; then
 else
   write_http_conf
   c_ok "还没有证书，先写 HTTP 配置（签证书需要 80 端口能访问）"
+fi
+
+# Ubuntu/Debian 装完 nginx 会自带一个 default 站点，占着 80 的 default_server。
+# 留着它，直接访问 IP 会看到 nginx 欢迎页，很容易误判成「部署失败」。
+# 删掉后访问 IP 会落到我们的 server 块上，测试时更直观。
+if [ -f /etc/nginx/sites-enabled/default ]; then
+  rm -f /etc/nginx/sites-enabled/default
+  c_ok "已移除 Ubuntu 默认站点（否则 IP 访问会看到欢迎页）"
 fi
 
 # 配置写坏了必须当场发现，否则 nginx 起不来，后面签证书也全废

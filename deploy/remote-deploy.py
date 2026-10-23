@@ -42,6 +42,9 @@ PASSWORD = os.environ.get("SSH_PASSWORD", "")
 KEY_PATH = os.environ.get("SSH_KEY", "").strip()
 DOMAIN = os.environ.get("DOMAIN", "photo.galois1130.site").strip()
 STEP = os.environ.get("STEP", "probe").strip()
+# 透传给 setup-server.sh：DNS 还没生效时用 FORCE=1，只想先架起 HTTP 时用 SKIP_CERT=1
+FORCE = os.environ.get("FORCE", "").strip()
+SKIP_CERT = os.environ.get("SKIP_CERT", "").strip()
 
 REMOTE_DIR = "/root/photo-coach-deploy"
 REMOTE_BUNDLE = "/root/dist.tar.gz"
@@ -210,21 +213,31 @@ def deploy(client, probe_result):
     for name in ("setup-server.sh", "nginx-http.conf.tpl", "nginx-ssl.conf.tpl"):
         upload(client, HERE / name, f"{REMOTE_DIR}/{name}")
 
-    # 服务器连不上 GitHub 时，用本地打的包
+    # 服务器连不上 GitHub 时，用本地打的包。
+    # 另一个更常见的场景：GitHub 能连但慢得离谱（实测某台机器只有 23KB/s，
+    # 9.8MB 要下 7 分钟）。所以支持 USE_LOCAL=1 强制走本地上传。
     gh = (probe_result.get("能否访问 GitHub") or "").strip()
-    use_local = gh not in ("200", "301", "302")
+    use_local = os.environ.get("USE_LOCAL", "").strip() == "1"
+    if not use_local:
+        use_local = gh not in ("200", "301", "302")
     bundle_arg = ""
     if use_local:
-        say("info", "服务器访问 GitHub 不通，改用本地上传的网页包")
+        say("info", "使用本地上传的网页包（不走 GitHub）")
         bundle = build_bundle()
         upload(client, bundle, REMOTE_BUNDLE)
         bundle_arg = f"LOCAL_BUNDLE={REMOTE_BUNDLE}"
 
     section("执行部署（装 nginx / 部署网页 / 签证书，约 1~3 分钟）")
+    extra = ""
+    if FORCE:
+        extra += f" FORCE={FORCE}"
+    if SKIP_CERT:
+        extra += f" SKIP_CERT={SKIP_CERT}"
     cmd = (
         f"cd {REMOTE_DIR} && chmod +x setup-server.sh && "
-        f"DOMAIN={DOMAIN} {bundle_arg} bash setup-server.sh 2>&1"
+        f"DOMAIN={DOMAIN}{extra} {bundle_arg} bash setup-server.sh 2>&1"
     )
+    say("info", f"命令：{cmd}")
     status, _ = run(client, cmd)
     return status
 
@@ -258,6 +271,15 @@ def main():
     say("ok", "SSH 连接成功")
 
     try:
+        # 临时跑一条命令用：STEP=shell CMD="ls -la /var/www"
+        if STEP == "shell":
+            cmd = os.environ.get("CMD", "").strip()
+            if not cmd:
+                say("err", "STEP=shell 需要同时提供 CMD=...")
+                return 2
+            status, _ = run(client, cmd)
+            return status
+
         info = probe(client)
         if STEP == "probe":
             print()
